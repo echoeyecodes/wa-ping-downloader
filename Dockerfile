@@ -2,9 +2,11 @@
 FROM oven/bun:1
 
 # Installed via pip so the image works on both x86_64 and arm64.
+# yt-dlp nightly tracks YouTube changes fastest; gallery-dl stays stable.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg ca-certificates \
-  && pip3 install --no-cache-dir --break-system-packages -U yt-dlp gallery-dl \
+  && pip3 install --no-cache-dir --break-system-packages -U --pre "yt-dlp[default]" \
+  && pip3 install --no-cache-dir --break-system-packages -U gallery-dl \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

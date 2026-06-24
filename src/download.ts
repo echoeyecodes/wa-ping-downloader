@@ -200,6 +200,9 @@ async function ytdlpDownload(
       "--newline",
       "--no-warnings",
       "--no-playlist",
+      // Avoid the android_vr client, whose media URLs often 403 on download.
+      "--extractor-args",
+      "youtube:player_client=default,web_safari",
       ...formatArgs,
       "--exec",
       "after_move:echo PINGPATH:%(filepath)q",
@@ -450,11 +453,22 @@ export async function download(
     throw new Error("Playlists aren't supported — send a single video link.");
   }
 
+  let ytError: unknown;
   try {
     return await ytdlpDownload(command, onEvent);
   } catch (err) {
     // A real video with no audio shouldn't fall through to gallery-dl.
     if (err instanceof Error && err.message.includes(NO_AUDIO)) throw err;
-    return galleryDownload(command, onEvent);
+    ytError = err;
+  }
+
+  try {
+    return await galleryDownload(command, onEvent);
+  } catch (galErr) {
+    const msg = galErr instanceof Error ? galErr.message : String(galErr);
+    if (/unsupported url|no suitable/i.test(msg) && ytError) {
+      throw ytError instanceof Error ? ytError : new Error(String(ytError));
+    }
+    throw galErr;
   }
 }
