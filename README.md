@@ -87,22 +87,33 @@ cp .env.sample .env
 | ------------------------ | ----------------------- | ---------------------------------------------------- |
 | `PING_DMS`               | `anyone`, `self`, `off` | Who can trigger downloads in direct chats.           |
 | `PING_GROUPS`            | `mention`, `all`, `off` | Group behavior. `mention` = only when you are tagged.|
-| `GALLERY_DL_COOKIES_B64` | base64 string           | Instagram cookies for gallery-dl (optional).         |
+| `GALLERY_DL_COOKIES_B64` | base64 string           | Login cookies for YouTube (server bot checks) and Instagram (optional). |
 | `WA_AUTH_DIR`            | path                    | Where the WhatsApp session is saved. Default `./.wa-auth`. |
 | `LINK_TOKEN`             | secret string           | If set, serves the link page at `/link?token=...`. If empty, the QR prints to the terminal instead. |
 | `PORT`                   | number                  | Port for the link page. Default `3000`.              |
 
-## Instagram cookies
+## Cookies (Instagram, and YouTube on a server)
 
-Instagram needs login cookies to download. Export your cookies as `cookies.txt`
-(use a browser extension like "Get cookies.txt"), then:
+Some downloads need login cookies:
+
+- **Instagram** posts/reels need them to download at all.
+- **YouTube** rejects datacenter IPs with "Sign in to confirm you're not a bot".
+  On a server, pass cookies so yt-dlp can authenticate. (Local/home IPs usually
+  work without cookies.)
+
+Export your cookies as `cookies.txt` (a browser extension like "Get cookies.txt"),
+then:
 
 ```bash
 npm run encode-cookies -- --write
 ```
 
-This keeps only the Instagram lines and writes `GALLERY_DL_COOKIES_B64` to `.env`.
-It never encodes cookies from other sites. Restart the bot after changing it.
+This keeps only `instagram.com` and `youtube.com` lines and writes
+`GALLERY_DL_COOKIES_B64` to `.env` — your other sites' sessions are never encoded.
+Restart the bot after changing it.
+
+Use a THROWAWAY Google account for the YouTube cookies: cookies used from a server
+IP can get the account flagged or banned.
 
 ## Run with Docker
 
