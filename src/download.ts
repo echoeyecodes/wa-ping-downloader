@@ -1,6 +1,6 @@
 /** Core downloader: drives yt-dlp, emits progress events, returns saved file paths. */
 
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse as parsePath } from "node:path";
 
@@ -237,6 +237,22 @@ const swapExt = (path: string, ext: string): string => {
   const { dir, name } = parsePath(path);
   return join(dir, `${name}.${ext}`);
 };
+
+/**
+ * Move the moov atom to the front (faststart) so the video plays on iOS WhatsApp,
+ * which won't start a video whose index is at the end. Stream-copy, no re-encode.
+ */
+export async function ensureFaststart(path: string): Promise<void> {
+  if (!["mp4", "mov", "m4v"].includes(extOf(path))) return;
+  const tmp = `${path}.faststart.mp4`;
+  const ok = await ffmpeg(["-i", path, "-c", "copy", "-movflags", "+faststart", tmp]);
+  if (!ok) {
+    await rm(tmp).catch(() => {});
+    return;
+  }
+  await rm(path).catch(() => {});
+  await rename(tmp, path);
+}
 
 /** Probe a video for duration (seconds) and dimensions, for nicer WhatsApp playback. */
 export async function videoMeta(
