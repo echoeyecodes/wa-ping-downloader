@@ -1,0 +1,9 @@
+node_modules
+downloads
+.wa-auth
+.env
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+*.log
