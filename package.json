@@ -1,0 +1,12 @@
+{
+  "name": "ping",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "ping": "bun run src/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
