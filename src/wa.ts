@@ -50,7 +50,13 @@ export async function runSocket(handlers: Handlers): Promise<void> {
       getMessage: async () => undefined,
     });
 
-    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("creds.update", async () => {
+      try {
+        await saveCreds();
+      } catch (err) {
+        console.error(`Failed to save WhatsApp session to ${AUTH_DIR}:`, err);
+      }
+    });
 
     sock.ev.on("connection.update", (update) => {
       const { connection, lastDisconnect, qr } = update;
