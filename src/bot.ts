@@ -8,7 +8,7 @@ import type {
   WAMessageKey,
   WASocket,
 } from "@whiskeysockets/baileys";
-import { type Command, download, parseCommand } from "./download";
+import { type Command, type DownloadEvent, download, parseCommand } from "./download";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
 const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
@@ -70,12 +70,26 @@ async function handleCommand(
   { url, format }: Command,
 ): Promise<void> {
   const reply = (text: string) => sock.sendMessage(jid, { text }, { quoted: msg });
+  const say = (text: string) => void reply(text).catch(() => {});
 
-  await reply(`📥 Downloading as *${format}*…`);
+  await reply("📥 Got your link — working on it…");
+
+  // Announce what it actually is (and the format) once download() figures it out.
+  let announced = false;
+  const onEvent = (event: DownloadEvent): void => {
+    if (announced) return;
+    if (event.kind === "fetching" || event.kind === "progress") {
+      announced = true;
+      say(`🎬 It's a video — saving as *${format}*…`);
+    } else if (event.kind === "gallery") {
+      announced = true;
+      say(`🖼️ Photo/gallery post — photos saved as-is, any videos as *${format}*…`);
+    }
+  };
 
   let paths: string[];
   try {
-    paths = await download({ url, format });
+    paths = await download({ url, format }, onEvent);
   } catch (err) {
     await reply(`✖ ${err instanceof Error ? err.message : String(err)}`);
     return;
