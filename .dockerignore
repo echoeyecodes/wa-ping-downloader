@@ -4,6 +4,7 @@ downloads
 .env
 .git
 .gitignore
+.github
 Dockerfile
 docker-compose.yml
 *.log
