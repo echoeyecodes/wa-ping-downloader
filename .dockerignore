@@ -6,5 +6,4 @@ downloads
 .gitignore
 .github
 Dockerfile
-docker-compose.yml
 *.log

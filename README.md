@@ -106,36 +106,30 @@ It never encodes cookies from other sites. Restart the bot after changing it.
 
 ## Run with Docker
 
-```bash
-docker compose build
-docker compose run --rm ping bun run src/pair.ts   # pair once (scan QR)
-docker compose up -d                               # start the bot
-```
-
-Config comes from `.env`. The `.wa-auth` and `downloads` folders are kept on disk.
-
-## Run the image anywhere
-
-It is a normal Docker image, so you can run it on any host: a VPS, a Raspberry
-Pi, your own server, or a platform like Coolify. Build it yourself, or pull it
-from a registry.
-
-Replace `<your-github-username>` below with your own (lowercase).
+It is a normal Docker image — run it on any host (a VPS, a Raspberry Pi, your own
+server, a platform like Coolify). Build it locally, or pull a published image
+(replace `<your-github-username>` with yours, lowercase).
 
 ```bash
-docker run -d \
+# build locally
+docker build -t ping .
+# or: docker pull ghcr.io/<your-github-username>/ping:latest
+
+docker run -d --name ping \
   --env-file .env \
   -v "$PWD/.wa-auth:/app/.wa-auth" \
   -v "$PWD/downloads:/app/downloads" \
-  ghcr.io/<your-github-username>/ping:latest
+  ping
 ```
 
 Keep `.wa-auth` on a volume so you do not re-pair after a restart. Pairing is
 interactive, so do it once against the running container:
 
 ```bash
-docker exec -it <container> bun run src/pair.ts
+docker exec -it ping bun run src/pair.ts
 ```
+
+Config comes from `.env`; `.wa-auth` and `downloads` are kept on disk.
 
 ## Auto deploy with GitHub Actions
 
