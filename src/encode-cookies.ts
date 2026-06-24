@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Encode the Instagram cookies from a cookies.txt to base64 for
- * GALLERY_DL_COOKIES_B64. Only instagram.com lines are kept — never encode your
- * whole browser cookie jar.
+ * Encode the Instagram + YouTube cookies from a cookies.txt to base64 for
+ * GALLERY_DL_COOKIES_B64. Only those domains are kept — never encode your whole
+ * browser cookie jar.
  *
- *   npm run encode-cookies                      # print ./cookies.txt (IG only)
+ *   npm run encode-cookies                      # print ./cookies.txt (filtered)
  *   npm run encode-cookies /path/cookies.txt    # print a given file
  *   npm run encode-cookies -- --write           # write to .env
  */
@@ -13,6 +13,8 @@ import { readFile, writeFile } from "node:fs/promises";
 
 const KEY = "GALLERY_DL_COOKIES_B64";
 const HEADER = "# Netscape HTTP Cookie File";
+// Sites that need login cookies. youtube.com bypasses YouTube's server bot check.
+const DOMAINS = ["instagram.com", "youtube.com"];
 
 const args = Bun.argv.slice(2);
 const write = args.some((a) => a === "--write" || a === "-w");
@@ -26,15 +28,18 @@ try {
   process.exit(1);
 }
 
-// Keep only Instagram cookie lines; drop everything else so other sites'
+// Keep only the allowed sites' cookie lines; drop everything else so other
 // sessions never get encoded or shipped.
 const cookies = raw
   .split(/\r?\n/)
   .filter((line) => line && !line.startsWith("#"))
-  .filter((line) => (line.split("\t")[0] ?? "").includes("instagram.com"));
+  .filter((line) => {
+    const domain = line.split("\t")[0] ?? "";
+    return DOMAINS.some((d) => domain.includes(d));
+  });
 
 if (cookies.length === 0) {
-  process.stderr.write(`No instagram.com cookies found in "${path}".\n`);
+  process.stderr.write(`No ${DOMAINS.join(" / ")} cookies found in "${path}".\n`);
   process.exit(1);
 }
 
@@ -62,6 +67,6 @@ if (existing.test(content)) {
 }
 
 await writeFile(file, content);
-process.stderr.write(`Wrote ${KEY} to ${file} (${cookies.length} Instagram cookies)\n`);
+process.stderr.write(`Wrote ${KEY} to ${file} (${cookies.length} cookies)\n`);
 
 export {};

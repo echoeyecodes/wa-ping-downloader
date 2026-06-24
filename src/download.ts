@@ -150,9 +150,10 @@ function isInstagram(url: string): boolean {
 }
 
 /**
- * Resolve a cookies.txt for gallery-dl on Instagram.
- * Accepts a file path (GALLERY_DL_COOKIES) or a base64-encoded file
- * (GALLERY_DL_COOKIES_B64), which is decoded to a temp file once.
+ * Resolve a cookies.txt used by yt-dlp (YouTube bot checks on servers) and
+ * gallery-dl (Instagram). Accepts a file path (GALLERY_DL_COOKIES) or a
+ * base64-encoded file (GALLERY_DL_COOKIES_B64), decoded to a temp file once.
+ * cookies.txt is domain-scoped, so one file safely covers both sites.
  */
 async function resolveCookies(): Promise<string | null> {
   if (cookiesFile !== undefined) return cookiesFile;
@@ -194,6 +195,9 @@ async function ytdlpDownload(
           "Merger:-movflags +faststart",
         ];
 
+  const cookies = await resolveCookies();
+  const cookieArgs = cookies ? ["--cookies", cookies] : [];
+
   const proc = Bun.spawn(
     [
       "yt-dlp",
@@ -203,6 +207,7 @@ async function ytdlpDownload(
       // Avoid the android_vr client, whose media URLs often 403 on download.
       "--extractor-args",
       "youtube:player_client=default,web_safari",
+      ...cookieArgs,
       ...formatArgs,
       "--exec",
       "after_move:echo PINGPATH:%(filepath)q",
