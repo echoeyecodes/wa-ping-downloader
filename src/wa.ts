@@ -1,5 +1,6 @@
 /** Thin Baileys glue: auth dir, quiet logger, a reconnecting socket runner, and helpers. */
 
+import { rm } from "node:fs/promises";
 import {
   Browsers,
   DisconnectReason,
@@ -31,6 +32,8 @@ type Handlers = {
   onOpen?: (sock: WASocket) => void;
   onLoggedOut?: () => void;
   onMessages?: (sock: WASocket, messages: WAMessage[]) => void | Promise<void>;
+  /** On logout, wipe the dead session and start linking again instead of stopping. */
+  relinkOnLogout?: boolean;
 };
 
 /** Run a WhatsApp socket, auto-reconnecting on transient drops (e.g. restart-required). */
@@ -66,6 +69,11 @@ export async function runSocket(handlers: Handlers): Promise<void> {
         const code = (lastDisconnect?.error as any)?.output?.statusCode;
         if (code === DisconnectReason.loggedOut) {
           handlers.onLoggedOut?.();
+          if (handlers.relinkOnLogout && !stopped) {
+            rm(AUTH_DIR, { recursive: true, force: true })
+              .catch(() => {})
+              .then(() => setTimeout(() => void start(), 1000));
+          }
           return;
         }
         if (!stopped) setTimeout(() => void start(), 2000);

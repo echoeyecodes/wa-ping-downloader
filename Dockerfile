@@ -18,6 +18,9 @@ COPY . .
 # Created here so the volume mount points exist even before first use.
 RUN mkdir -p downloads .wa-auth
 
-# Default process is the WhatsApp bot. Pair with:
-#   docker compose run --rm ping bun run src/pair.ts
+# Web link page for (re)linking WhatsApp (enabled when LINK_TOKEN is set).
+EXPOSE 3000
+
+# Default process is the WhatsApp bot. When not linked it serves the link page;
+# open /link?token=... to scan. No separate pair step needed in production.
 CMD ["bun", "run", "src/bot.ts"]

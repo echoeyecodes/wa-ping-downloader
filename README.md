@@ -89,6 +89,8 @@ cp .env.sample .env
 | `PING_GROUPS`            | `mention`, `all`, `off` | Group behavior. `mention` = only when you are tagged.|
 | `GALLERY_DL_COOKIES_B64` | base64 string           | Instagram cookies for gallery-dl (optional).         |
 | `WA_AUTH_DIR`            | path                    | Where the WhatsApp session is saved. Default `./.wa-auth`. |
+| `LINK_TOKEN`             | secret string           | If set, serves the link page at `/link?token=...`. If empty, the QR prints to the terminal instead. |
+| `PORT`                   | number                  | Port for the link page. Default `3000`.              |
 
 ## Instagram cookies
 
@@ -175,3 +177,20 @@ Fix it:
 
 You can also set `WA_AUTH_DIR` to a path on a volume you already mount (for
 example `WA_AUTH_DIR=/data/wa-auth`).
+
+## Relinking without a terminal
+
+WhatsApp sometimes unlinks a device (you log out elsewhere, it sits idle, etc).
+The bot handles this without a shell:
+
+- Set `LINK_TOKEN` to a strong secret to serve a protected page on `PORT`
+  (default `3000`) at `/link?token=YOUR_TOKEN`. In a deploy platform, give the app
+  a domain. Without `LINK_TOKEN` no page is served and the QR prints to the logs.
+- When the bot is not linked, open the page. It shows a QR to scan. The page
+  refreshes on its own and switches to "Linked" once done.
+- If WhatsApp unlinks the device while running, the bot clears the dead session
+  and goes back to the link page automatically — just open it and scan again. No
+  redeploy, no `docker exec`.
+
+The QR lets someone link your account, so keep `LINK_TOKEN` secret and only open
+the URL yourself.

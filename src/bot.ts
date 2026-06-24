@@ -8,9 +8,11 @@ import type {
   WAMessageKey,
   WASocket,
 } from "@whiskeysockets/baileys";
+import qrcode from "qrcode-terminal";
 import { config } from "./config";
 import { type Command, download, parseCommand } from "./download";
-import { AUTH_DIR, extractText, isMentioned, isSelfChat, runSocket } from "./wa";
+import { linkState, startLinkServer } from "./link";
+import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
 const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
 const ALBUM_VIDEO = ["mp4", "mov", "mkv", "webm", "m4v", "gif"];
@@ -136,14 +138,36 @@ async function handleCommand(
   }
 }
 
+const linkHint = startLinkServer();
+
 await runSocket({
-  onQr: () => {
-    if (pairHintShown) return;
-    pairHintShown = true;
-    console.log(`Not paired yet (no session in ${AUTH_DIR}). Run: npm run pair`);
+  relinkOnLogout: true,
+  onQr: (qr) => {
+    linkState.status = "waiting";
+    linkState.qr = qr;
+    if (linkHint) {
+      if (!pairHintShown) {
+        pairHintShown = true;
+        console.log(`Not linked. Open the link page (${linkHint}) to scan.`);
+      }
+    } else {
+      console.log("Not linked. Scan this QR (or set LINK_TOKEN to use the web page):");
+      qrcode.generate(qr, { small: true });
+    }
+  },
+  onLoggedOut: () => {
+    pairHintShown = false;
+    linkState.status = "waiting";
+    linkState.qr = null;
+    linkState.user = null;
+    console.log("WhatsApp unlinked this device. Re-linking — open the link page.");
   },
   onOpen: (sock) => {
     startedAt = Math.floor(Date.now() / 1000);
+    pairHintShown = false;
+    linkState.status = "linked";
+    linkState.user = sock.user?.id ?? null;
+    linkState.qr = null;
     console.log(`Bot ready as ${sock.user?.id}. DMs=${config.dms}, Groups=${config.groups}`);
   },
   onMessages: async (sock, messages) => {
