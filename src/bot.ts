@@ -2,23 +2,62 @@
 /** `npm run bot` — watch your WhatsApp self-chat for links and download them. */
 
 import { parse as parsePath } from "node:path";
-import type { AnyMessageContent, WAMessage, WASocket } from "@whiskeysockets/baileys";
+import type {
+  AnyMessageContent,
+  WAMessage,
+  WAMessageKey,
+  WASocket,
+} from "@whiskeysockets/baileys";
 import { type Command, download, parseCommand } from "./download";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
+const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
+const ALBUM_VIDEO = ["mp4", "mov", "mkv", "webm", "m4v", "gif"];
+
+const extOf = (path: string): string => parsePath(path).ext.toLowerCase().slice(1);
+const isAlbumMedia = (path: string): boolean =>
+  ALBUM_IMAGE.includes(extOf(path)) || ALBUM_VIDEO.includes(extOf(path));
+
 /** Build the right WhatsApp message for a file based on its actual type. */
 function mediaContent(path: string): AnyMessageContent {
-  const { base, ext } = parsePath(path);
-  const e = ext.toLowerCase().slice(1);
+  const { base } = parsePath(path);
+  const e = extOf(path);
   if (["mp3", "m4a", "aac", "opus", "ogg", "wav"].includes(e)) {
     return { audio: { url: path }, mimetype: e === "mp3" ? "audio/mpeg" : `audio/${e}`, fileName: base };
   }
-  if (["mp4", "mov", "mkv", "webm", "m4v"].includes(e)) {
-    return { video: { url: path }, mimetype: "video/mp4", caption: base };
-  }
   if (e === "gif") return { video: { url: path }, gifPlayback: true, caption: base };
-  if (["jpg", "jpeg", "png", "webp"].includes(e)) return { image: { url: path }, caption: base };
+  if (ALBUM_VIDEO.includes(e)) return { video: { url: path }, mimetype: "video/mp4", caption: base };
+  if (ALBUM_IMAGE.includes(e)) return { image: { url: path }, caption: base };
   return { document: { url: path }, mimetype: "application/octet-stream", fileName: base };
+}
+
+/** A single child of an album: image or video tied to the parent album message. */
+function albumChild(path: string, parent: WAMessageKey): AnyMessageContent {
+  const e = extOf(path);
+  if (ALBUM_IMAGE.includes(e)) return { image: { url: path }, albumParentKey: parent };
+  if (e === "gif") return { video: { url: path }, gifPlayback: true, albumParentKey: parent };
+  return { video: { url: path }, mimetype: "video/mp4", albumParentKey: parent };
+}
+
+/** Send images/videos as one album so they arrive together. */
+async function sendAlbum(
+  sock: WASocket,
+  jid: string,
+  quoted: WAMessage,
+  files: string[],
+): Promise<void> {
+  const expectedImageCount = files.filter((f) => ALBUM_IMAGE.includes(extOf(f))).length;
+  const expectedVideoCount = files.length - expectedImageCount;
+  const parent = await sock.sendMessage(
+    jid,
+    { album: { expectedImageCount, expectedVideoCount } },
+    { quoted },
+  );
+  if (!parent?.key) {
+    for (const f of files) await sock.sendMessage(jid, mediaContent(f), { quoted });
+    return;
+  }
+  for (const f of files) await sock.sendMessage(jid, albumChild(f, parent.key));
 }
 
 let pairHintShown = false;
@@ -42,13 +81,19 @@ async function handleCommand(
     return;
   }
 
-  for (const path of paths) {
-    try {
-      await sock.sendMessage(jid, mediaContent(path), { quoted: msg });
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await reply(`✖ Couldn't attach ${parsePath(path).base} (${reason}). Saved at:\n${path}`);
+  const album = paths.filter(isAlbumMedia);
+  const singles = paths.filter((p) => !isAlbumMedia(p));
+
+  try {
+    if (album.length >= 2) {
+      await sendAlbum(sock, jid, msg, album);
+    } else {
+      for (const path of album) await sock.sendMessage(jid, mediaContent(path), { quoted: msg });
     }
+    for (const path of singles) await sock.sendMessage(jid, mediaContent(path), { quoted: msg });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await reply(`✖ Couldn't attach files (${reason}). Saved in:\n${parsePath(paths[0]).dir}`);
   }
 }
 
