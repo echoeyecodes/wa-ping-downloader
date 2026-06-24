@@ -101,7 +101,7 @@ const ui = (() => {
     error(message: string): void {
       stopSpinner();
       clearLive();
-      process.stderr.write(`✖ ${message}\n`);
+      process.stderr.write(`Error: ${message}\n`);
     },
     done(): void {
       stopSpinner();
@@ -112,30 +112,30 @@ const ui = (() => {
 
 async function main(): Promise<void> {
   const command = parseArgs(Bun.argv.slice(2));
-  ui.spin(`🔎 Resolving ${command.url} …`);
+  ui.spin(`Resolving ${command.url}`);
 
   let paths: string[];
   try {
     paths = await download(command, (event) => {
       switch (event.kind) {
         case "fetching":
-          return ui.think("📥 Fetching media stream…");
+          return ui.think("Downloading video");
         case "progress": {
-          const extras = [event.speed, event.eta && `ETA ${event.eta}`].filter(Boolean).join(" · ");
-          return ui.status(`⬇️  Downloading  ${event.percent}%${extras ? `  (${extras})` : ""}`);
+          const extras = [event.speed, event.eta && `ETA ${event.eta}`].filter(Boolean).join(", ");
+          return ui.status(`Downloading ${event.percent}%${extras ? ` (${extras})` : ""}`);
         }
         case "merging":
-          return ui.spin("🎬 Merging video + audio…");
+          return ui.spin("Merging video and audio");
         case "converting":
-          return ui.spin("🎧 Converting to mp3…");
+          return ui.spin("Converting to mp3");
         case "reusing":
-          return ui.think("📦 Already on disk — reusing it.");
+          return ui.think("Already downloaded, reusing it");
         case "removed":
-          return ui.think(`🗑️  Removed old ${event.file}`);
+          return ui.think(`Removed old ${event.file}`);
         case "gallery":
-          return ui.spin("🖼️  No video found — fetching post media with gallery-dl…");
+          return ui.spin("No video found, using gallery-dl");
         case "processing":
-          return ui.spin(`🎞️  ${event.label}…`);
+          return ui.spin(event.label);
       }
     });
   } catch (err) {
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
   }
 
   ui.done();
-  ui.think(`✅ Saved ${paths.length} file${paths.length > 1 ? "s" : ""} as ${command.format}:`);
+  ui.think(`Saved ${paths.length} file${paths.length > 1 ? "s" : ""} as ${command.format}:`);
   for (const path of paths) console.log(pathToFileURL(path).href);
 }
 

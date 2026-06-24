@@ -8,6 +8,7 @@ import type {
   WAMessageKey,
   WASocket,
 } from "@whiskeysockets/baileys";
+import { config } from "./config";
 import { type Command, type DownloadEvent, download, parseCommand } from "./download";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
@@ -63,6 +64,28 @@ async function sendAlbum(
 let pairHintShown = false;
 let startedAt = 0;
 
+/** Decide whether a message is in scope, per the .env config. */
+function shouldHandle(jid: string, msg: WAMessage, sock: WASocket): boolean {
+  const fromMe = msg.key?.fromMe === true;
+
+  if (jid.endsWith("@g.us")) {
+    if (config.groups === "off") return false;
+    if (fromMe) return false; // don't act on my own group posts
+    if (config.groups === "mention") return isMentioned(msg, sock);
+    return true; // "all"
+  }
+
+  if (jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")) {
+    if (config.dms === "off") return false;
+    const self = isSelfChat(jid, sock);
+    if (fromMe && !self) return false; // my outgoing DMs to other people
+    if (config.dms === "self") return self;
+    return true; // "anyone" (incoming from others, plus my self-chat)
+  }
+
+  return false; // broadcasts, status, newsletters, etc.
+}
+
 async function handleCommand(
   sock: WASocket,
   jid: string,
@@ -72,18 +95,18 @@ async function handleCommand(
   const reply = (text: string) => sock.sendMessage(jid, { text }, { quoted: msg });
   const say = (text: string) => void reply(text).catch(() => {});
 
-  await reply("📥 Got your link — working on it…");
+  await reply("Working on it.");
 
-  // Announce what it actually is (and the format) once download() figures it out.
+  // Tell the user what it is (and the format) once download() figures it out.
   let announced = false;
   const onEvent = (event: DownloadEvent): void => {
     if (announced) return;
     if (event.kind === "fetching" || event.kind === "progress") {
       announced = true;
-      say(`🎬 It's a video — saving as *${format}*…`);
+      say(`Video found. Saving as ${format}.`);
     } else if (event.kind === "gallery") {
       announced = true;
-      say(`🖼️ Photo/gallery post — photos saved as-is, any videos as *${format}*…`);
+      say(`Photo or gallery post. Saving photos as-is and videos as ${format}.`);
     }
   };
 
@@ -91,7 +114,7 @@ async function handleCommand(
   try {
     paths = await download({ url, format }, onEvent);
   } catch (err) {
-    await reply(`✖ ${err instanceof Error ? err.message : String(err)}`);
+    await reply(`Failed: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
 
@@ -107,7 +130,7 @@ async function handleCommand(
     for (const path of singles) await sock.sendMessage(jid, mediaContent(path), { quoted: msg });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    await reply(`✖ Couldn't attach files (${reason}). Saved in:\n${parsePath(paths[0]).dir}`);
+    await reply(`Couldn't send the files: ${reason}. They are saved in:\n${parsePath(paths[0]).dir}`);
   }
 }
 
@@ -115,27 +138,19 @@ await runSocket({
   onQr: () => {
     if (pairHintShown) return;
     pairHintShown = true;
-    console.log("⚠️  Not paired yet. Stop this and run:  npm run pair");
+    console.log("Not paired yet. Stop this and run: npm run pair");
   },
   onOpen: (sock) => {
     startedAt = Math.floor(Date.now() / 1000);
-    console.log(`🤖 Bot ready as ${sock.user?.id}. It downloads links from DMs and groups (optionally "mp3").`);
+    console.log(`Bot ready as ${sock.user?.id}. DMs=${config.dms}, Groups=${config.groups}`);
   },
   onMessages: async (sock, messages) => {
     for (const msg of messages) {
       const jid = msg.key?.remoteJid;
       if (!jid) continue;
-      // DMs and groups only — skip broadcasts, status, and newsletters.
-      const allowed =
-        jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid") || jid.endsWith("@g.us");
-      if (!allowed) continue;
-      // Handle links others send (in DMs or groups) plus links I send myself;
-      // skip my own outgoing messages elsewhere (and my replies, which carry no URL).
-      if (msg.key?.fromMe === true && !isSelfChat(jid, sock)) continue;
-      // In groups, only act when I'm @-mentioned.
-      if (jid.endsWith("@g.us") && !isMentioned(msg, sock)) continue;
       // Ignore backlog delivered on reconnect so old links aren't re-downloaded.
       if (Number(msg.messageTimestamp) < startedAt - 5) continue;
+      if (!shouldHandle(jid, msg, sock)) continue;
 
       const command = parseCommand(extractText(msg));
       if (!command) continue;
