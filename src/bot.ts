@@ -10,7 +10,7 @@ import type {
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import { config } from "./config";
-import { type Command, download, parseCommand } from "./download";
+import { type Command, download, parseCommand, videoMeta } from "./download";
 import { linkState, startLinkServer } from "./link";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
@@ -22,24 +22,31 @@ const isAlbumMedia = (path: string): boolean =>
   ALBUM_IMAGE.includes(extOf(path)) || ALBUM_VIDEO.includes(extOf(path));
 
 /** Build the right WhatsApp message for a file based on its actual type. */
-function mediaContent(path: string): AnyMessageContent {
+async function mediaContent(path: string): Promise<AnyMessageContent> {
   const { base } = parsePath(path);
   const e = extOf(path);
   if (["mp3", "m4a", "aac", "opus", "ogg", "wav"].includes(e)) {
     return { audio: { url: path }, mimetype: e === "mp3" ? "audio/mpeg" : `audio/${e}`, fileName: base };
   }
-  if (e === "gif") return { video: { url: path }, gifPlayback: true, caption: base };
-  if (ALBUM_VIDEO.includes(e)) return { video: { url: path }, mimetype: "video/mp4", caption: base };
+  if (e === "gif") {
+    return { video: { url: path }, gifPlayback: true, caption: base, ...(await videoMeta(path)) } as AnyMessageContent;
+  }
+  if (ALBUM_VIDEO.includes(e)) {
+    return { video: { url: path }, mimetype: "video/mp4", caption: base, ...(await videoMeta(path)) } as AnyMessageContent;
+  }
   if (ALBUM_IMAGE.includes(e)) return { image: { url: path }, caption: base };
   return { document: { url: path }, mimetype: "application/octet-stream", fileName: base };
 }
 
 /** A single child of an album: image or video tied to the parent album message. */
-function albumChild(path: string, parent: WAMessageKey): AnyMessageContent {
+async function albumChild(path: string, parent: WAMessageKey): Promise<AnyMessageContent> {
   const e = extOf(path);
   if (ALBUM_IMAGE.includes(e)) return { image: { url: path }, albumParentKey: parent };
-  if (e === "gif") return { video: { url: path }, gifPlayback: true, albumParentKey: parent };
-  return { video: { url: path }, mimetype: "video/mp4", albumParentKey: parent };
+  const meta = await videoMeta(path);
+  if (e === "gif") {
+    return { video: { url: path }, gifPlayback: true, albumParentKey: parent, ...meta } as AnyMessageContent;
+  }
+  return { video: { url: path }, mimetype: "video/mp4", albumParentKey: parent, ...meta } as AnyMessageContent;
 }
 
 /** Send images/videos as one album so they arrive together. */
@@ -57,10 +64,10 @@ async function sendAlbum(
     { quoted },
   );
   if (!parent?.key) {
-    for (const f of files) await sock.sendMessage(jid, mediaContent(f), { quoted });
+    for (const f of files) await sock.sendMessage(jid, await mediaContent(f), { quoted });
     return;
   }
-  for (const f of files) await sock.sendMessage(jid, albumChild(f, parent.key));
+  for (const f of files) await sock.sendMessage(jid, await albumChild(f, parent.key));
 }
 
 let pairHintShown = false;
@@ -129,9 +136,9 @@ async function handleCommand(
     if (album.length >= 2) {
       await sendAlbum(sock, jid, msg, album);
     } else {
-      for (const path of album) await sock.sendMessage(jid, mediaContent(path), { quoted: msg });
+      for (const path of album) await sock.sendMessage(jid, await mediaContent(path), { quoted: msg });
     }
-    for (const path of singles) await sock.sendMessage(jid, mediaContent(path), { quoted: msg });
+    for (const path of singles) await sock.sendMessage(jid, await mediaContent(path), { quoted: msg });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     await reply(`Couldn't send the files: ${reason}. They are saved in:\n${parsePath(paths[0]).dir}`);

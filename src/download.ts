@@ -238,6 +238,41 @@ const swapExt = (path: string, ext: string): string => {
   return join(dir, `${name}.${ext}`);
 };
 
+/** Probe a video for duration (seconds) and dimensions, for nicer WhatsApp playback. */
+export async function videoMeta(
+  path: string,
+): Promise<{ seconds?: number; width?: number; height?: number }> {
+  try {
+    const proc = Bun.spawn(
+      [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height:format=duration",
+        "-of",
+        "json",
+        path,
+      ],
+      { stdout: "pipe", stderr: "ignore" },
+    );
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    const data = JSON.parse(out);
+    const stream = data.streams?.[0] ?? {};
+    const duration = Number(data.format?.duration);
+    return {
+      seconds: Number.isFinite(duration) ? Math.round(duration) : undefined,
+      width: typeof stream.width === "number" ? stream.width : undefined,
+      height: typeof stream.height === "number" ? stream.height : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function ffmpeg(args: string[]): Promise<boolean> {
   const proc = Bun.spawn(["ffmpeg", "-y", "-loglevel", "error", ...args], {
     stdout: "ignore",
