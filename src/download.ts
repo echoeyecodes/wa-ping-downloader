@@ -182,7 +182,17 @@ async function ytdlpDownload(
   const formatArgs =
     format === "mp3"
       ? ["-f", "ba/b", "-x", "--audio-format", "mp3"]
-      : ["-f", "bv*+ba/b", "--merge-output-format", "mp4"];
+      : [
+          // Prefer H.264 + AAC so the result plays in WhatsApp (not just desktop
+          // players). Fall back to best available if a site has no H.264.
+          "-f",
+          "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1]/bv*+ba/b",
+          "--merge-output-format",
+          "mp4",
+          // moov atom at the front for clean streaming/playback.
+          "--postprocessor-args",
+          "Merger:-movflags +faststart",
+        ];
 
   const proc = Bun.spawn(
     [
