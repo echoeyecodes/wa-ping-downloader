@@ -1,30 +1,44 @@
 #!/usr/bin/env bun
 /**
- * Encode a cookies.txt to base64 for GALLERY_DL_COOKIES_B64.
- * Prints it by default, or writes it to .env with --write / -w.
+ * Encode the Instagram cookies from a cookies.txt to base64 for
+ * GALLERY_DL_COOKIES_B64. Only instagram.com lines are kept — never encode your
+ * whole browser cookie jar.
  *
- *   npm run encode-cookies                      # print ./cookies.txt
+ *   npm run encode-cookies                      # print ./cookies.txt (IG only)
  *   npm run encode-cookies /path/cookies.txt    # print a given file
- *   npm run encode-cookies -- --write           # write ./cookies.txt to .env
+ *   npm run encode-cookies -- --write           # write to .env
  */
 
 import { readFile, writeFile } from "node:fs/promises";
 
 const KEY = "GALLERY_DL_COOKIES_B64";
+const HEADER = "# Netscape HTTP Cookie File";
 
 const args = Bun.argv.slice(2);
 const write = args.some((a) => a === "--write" || a === "-w");
 const path = args.find((a) => !a.startsWith("-")) ?? "cookies.txt";
 
-let data: Buffer;
+let raw: string;
 try {
-  data = await readFile(path);
+  raw = await readFile(path, "utf8");
 } catch {
   process.stderr.write(`Couldn't read "${path}". Pass a path or put cookies.txt in this folder.\n`);
   process.exit(1);
 }
 
-const b64 = data.toString("base64");
+// Keep only Instagram cookie lines; drop everything else so other sites'
+// sessions never get encoded or shipped.
+const cookies = raw
+  .split(/\r?\n/)
+  .filter((line) => line && !line.startsWith("#"))
+  .filter((line) => (line.split("\t")[0] ?? "").includes("instagram.com"));
+
+if (cookies.length === 0) {
+  process.stderr.write(`No instagram.com cookies found in "${path}".\n`);
+  process.exit(1);
+}
+
+const b64 = Buffer.from(`${HEADER}\n${cookies.join("\n")}\n`, "utf8").toString("base64");
 
 if (!write) {
   process.stdout.write(b64);
@@ -48,6 +62,6 @@ if (existing.test(content)) {
 }
 
 await writeFile(file, content);
-process.stderr.write(`Wrote ${KEY} to ${file}\n`);
+process.stderr.write(`Wrote ${KEY} to ${file} (${cookies.length} Instagram cookies)\n`);
 
 export {};
