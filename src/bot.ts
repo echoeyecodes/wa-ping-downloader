@@ -3,14 +3,22 @@
 
 import { parse as parsePath } from "node:path";
 import type { AnyMessageContent, WAMessage, WASocket } from "@whiskeysockets/baileys";
-import { type Command, type Format, download, parseCommand } from "./download";
+import { type Command, download, parseCommand } from "./download";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
-function mediaContent(path: string, format: Format): AnyMessageContent {
-  const { base } = parsePath(path);
-  return format === "mp3"
-    ? { audio: { url: path }, mimetype: "audio/mpeg", fileName: base }
-    : { video: { url: path }, mimetype: "video/mp4", caption: base };
+/** Build the right WhatsApp message for a file based on its actual type. */
+function mediaContent(path: string): AnyMessageContent {
+  const { base, ext } = parsePath(path);
+  const e = ext.toLowerCase().slice(1);
+  if (["mp3", "m4a", "aac", "opus", "ogg", "wav"].includes(e)) {
+    return { audio: { url: path }, mimetype: e === "mp3" ? "audio/mpeg" : `audio/${e}`, fileName: base };
+  }
+  if (["mp4", "mov", "mkv", "webm", "m4v"].includes(e)) {
+    return { video: { url: path }, mimetype: "video/mp4", caption: base };
+  }
+  if (e === "gif") return { video: { url: path }, gifPlayback: true, caption: base };
+  if (["jpg", "jpeg", "png", "webp"].includes(e)) return { image: { url: path }, caption: base };
+  return { document: { url: path }, mimetype: "application/octet-stream", fileName: base };
 }
 
 let pairHintShown = false;
@@ -36,7 +44,7 @@ async function handleCommand(
 
   for (const path of paths) {
     try {
-      await sock.sendMessage(jid, mediaContent(path, format), { quoted: msg });
+      await sock.sendMessage(jid, mediaContent(path), { quoted: msg });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       await reply(`✖ Couldn't attach ${parsePath(path).base} (${reason}). Saved at:\n${path}`);

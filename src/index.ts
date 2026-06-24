@@ -132,6 +132,10 @@ async function main(): Promise<void> {
           return ui.think("📦 Already on disk — reusing it.");
         case "removed":
           return ui.think(`🗑️  Removed old ${event.file}`);
+        case "gallery":
+          return ui.spin("🖼️  No video found — fetching post media with gallery-dl…");
+        case "processing":
+          return ui.spin(`🎞️  ${event.label}…`);
       }
     });
   } catch (err) {

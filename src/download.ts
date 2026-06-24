@@ -1,6 +1,6 @@
 /** Core downloader: drives yt-dlp, emits progress events, returns saved file paths. */
 
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, parse as parsePath } from "node:path";
 
 export type Format = "mp4" | "mp3";
@@ -17,7 +17,9 @@ export type DownloadEvent =
   | { kind: "merging" }
   | { kind: "converting" }
   | { kind: "reusing" }
-  | { kind: "removed"; file: string };
+  | { kind: "removed"; file: string }
+  | { kind: "gallery" }
+  | { kind: "processing"; label: string };
 
 export type Command = { url: string; format: Format };
 
@@ -134,15 +136,13 @@ async function pump(
   if (buffer) onLine(buffer.trim());
 }
 
-/** Download `url` as `format` into ./downloads. Throws a friendly Error on failure. */
-export async function download(
+const NO_AUDIO = "no audio track";
+
+/** Try yt-dlp (single video / audio). Throws a friendly Error on failure. */
+async function ytdlpDownload(
   { url, format }: Command,
   onEvent?: (event: DownloadEvent) => void,
 ): Promise<string[]> {
-  if (isPlaylistUrl(url)) {
-    throw new Error("Playlists aren't supported — send a single video link.");
-  }
-
   const outDir = downloadsDir();
   await mkdir(outDir, { recursive: true });
   const template = `${outDir}/%(title)s [%(id)s].%(ext)s`;
@@ -179,10 +179,138 @@ export async function download(
   ]);
 
   if (exitCode !== 0 || paths.length === 0) {
-    const noAudio = errors.find((e) => e.includes("no audio track"));
+    const noAudio = errors.find((e) => e.includes(NO_AUDIO));
     throw new Error(noAudio ?? errors.at(-1) ?? `yt-dlp exited with code ${exitCode}.`);
   }
 
   await removeOtherFormat(paths, format, onEvent);
   return paths;
+}
+
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff", "heic", "avif"]);
+const VIDEO_EXTS = new Set(["mp4", "mov", "mkv", "webm", "m4v", "avi"]);
+
+const extOf = (path: string): string => parsePath(path).ext.toLowerCase().slice(1);
+const swapExt = (path: string, ext: string): string => {
+  const { dir, name } = parsePath(path);
+  return join(dir, `${name}.${ext}`);
+};
+
+async function ffmpeg(args: string[]): Promise<boolean> {
+  const proc = Bun.spawn(["ffmpeg", "-y", "-loglevel", "error", ...args], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  return (await proc.exited) === 0;
+}
+
+async function toMp3(src: string): Promise<string> {
+  const out = swapExt(src, "mp3");
+  const ok = await ffmpeg(["-i", src, "-vn", "-acodec", "libmp3lame", "-q:a", "2", out]);
+  if (!ok) return src;
+  await rm(src).catch(() => {});
+  return out;
+}
+
+async function toMp4(src: string): Promise<string> {
+  const out = swapExt(src, "mp4");
+  let ok = await ffmpeg(["-i", src, "-c", "copy", "-movflags", "+faststart", out]);
+  if (!ok) ok = await ffmpeg(["-i", src, "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", out]);
+  if (!ok) return src;
+  await rm(src).catch(() => {});
+  return out;
+}
+
+/** Apply the requested format to gallery files: videos → mp4/mp3, images kept as-is. */
+async function applyFormat(
+  files: string[],
+  format: Format,
+  onEvent?: (event: DownloadEvent) => void,
+): Promise<string[]> {
+  const result: string[] = [];
+  for (const file of files) {
+    const ext = extOf(file);
+    if (!VIDEO_EXTS.has(ext)) {
+      result.push(file); // images (and anything else) saved as-is
+      continue;
+    }
+    if (format === "mp3") {
+      onEvent?.({ kind: "processing", label: `Extracting audio from ${parsePath(file).base}` });
+      result.push(await toMp3(file));
+    } else if (ext !== "mp4") {
+      onEvent?.({ kind: "processing", label: `Converting ${parsePath(file).base} to mp4` });
+      result.push(await toMp4(file));
+    } else {
+      result.push(file);
+    }
+  }
+  return result;
+}
+
+async function listFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await listFiles(path)));
+    else out.push(path);
+  }
+  return out;
+}
+
+function gallerySlug(url: string): string {
+  try {
+    const u = new URL(url);
+    const raw = u.hostname.replace(/^www\./, "") + u.pathname;
+    return raw.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "gallery";
+  } catch {
+    return "gallery";
+  }
+}
+
+const lastLine = (text: string): string =>
+  text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
+
+/** Fall back to gallery-dl for image/mixed posts; download everything, then apply format. */
+async function galleryDownload(
+  { url, format }: Command,
+  onEvent?: (event: DownloadEvent) => void,
+): Promise<string[]> {
+  onEvent?.({ kind: "gallery" });
+  const dir = join(downloadsDir(), gallerySlug(url));
+  await mkdir(dir, { recursive: true });
+
+  const proc = Bun.spawn(["gallery-dl", "--no-mtime", "-D", dir, url], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  const files = await listFiles(dir);
+  if (files.length === 0) {
+    const message = lastLine(stderr) || lastLine(stdout) || `gallery-dl exited with code ${code}.`;
+    throw new Error(message.replace(/^\[\w+\]\s*/, ""));
+  }
+  return applyFormat(files, format, onEvent);
+}
+
+/** Download a link into ./downloads, falling back to gallery-dl for non-video posts. */
+export async function download(
+  command: Command,
+  onEvent?: (event: DownloadEvent) => void,
+): Promise<string[]> {
+  if (isPlaylistUrl(command.url)) {
+    throw new Error("Playlists aren't supported — send a single video link.");
+  }
+
+  try {
+    return await ytdlpDownload(command, onEvent);
+  } catch (err) {
+    // A real video with no audio shouldn't fall through to gallery-dl.
+    if (err instanceof Error && err.message.includes(NO_AUDIO)) throw err;
+    return galleryDownload(command, onEvent);
+  }
 }
