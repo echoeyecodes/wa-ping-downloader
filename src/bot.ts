@@ -9,7 +9,7 @@ import type {
   WASocket,
 } from "@whiskeysockets/baileys";
 import { config } from "./config";
-import { type Command, type DownloadEvent, download, parseCommand } from "./download";
+import { type Command, download, parseCommand } from "./download";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
 const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
@@ -86,6 +86,21 @@ function shouldHandle(jid: string, msg: WAMessage, sock: WASocket): boolean {
   return false; // broadcasts, status, newsletters, etc.
 }
 
+/** Show the "typing…" indicator until stop() is called, refreshing so it stays on. */
+function startTyping(sock: WASocket, jid: string): () => void {
+  let active = true;
+  const tick = () => {
+    if (active) void sock.sendPresenceUpdate("composing", jid).catch(() => {});
+  };
+  tick();
+  const timer = setInterval(tick, 9000);
+  return () => {
+    active = false;
+    clearInterval(timer);
+    void sock.sendPresenceUpdate("paused", jid).catch(() => {});
+  };
+}
+
 async function handleCommand(
   sock: WASocket,
   jid: string,
@@ -93,30 +108,17 @@ async function handleCommand(
   { url, format }: Command,
 ): Promise<void> {
   const reply = (text: string) => sock.sendMessage(jid, { text }, { quoted: msg });
-  const say = (text: string) => void reply(text).catch(() => {});
-
-  await reply("Working on it.");
-
-  // Tell the user what it is (and the format) once download() figures it out.
-  let announced = false;
-  const onEvent = (event: DownloadEvent): void => {
-    if (announced) return;
-    if (event.kind === "fetching" || event.kind === "progress") {
-      announced = true;
-      say(`Video found. Saving as ${format}.`);
-    } else if (event.kind === "gallery") {
-      announced = true;
-      say(`Photo or gallery post. Saving photos as-is and videos as ${format}.`);
-    }
-  };
+  const stopTyping = startTyping(sock, jid);
 
   let paths: string[];
   try {
-    paths = await download({ url, format }, onEvent);
+    paths = await download({ url, format });
   } catch (err) {
+    stopTyping();
     await reply(`Failed: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
+  stopTyping();
 
   const album = paths.filter(isAlbumMedia);
   const singles = paths.filter((p) => !isAlbumMedia(p));
