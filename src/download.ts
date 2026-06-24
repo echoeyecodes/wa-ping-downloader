@@ -1,6 +1,7 @@
 /** Core downloader: drives yt-dlp, emits progress events, returns saved file paths. */
 
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, parse as parsePath } from "node:path";
 
 export type Format = "mp4" | "mp3";
@@ -137,6 +138,37 @@ async function pump(
 }
 
 const NO_AUDIO = "no audio track";
+
+let cookiesFile: string | null | undefined; // undefined = not resolved yet
+
+function isInstagram(url: string): boolean {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").endsWith("instagram.com");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a cookies.txt for gallery-dl on Instagram.
+ * Accepts a file path (GALLERY_DL_COOKIES) or a base64-encoded file
+ * (GALLERY_DL_COOKIES_B64), which is decoded to a temp file once.
+ */
+async function resolveCookies(): Promise<string | null> {
+  if (cookiesFile !== undefined) return cookiesFile;
+
+  const path = process.env.GALLERY_DL_COOKIES?.trim();
+  if (path) return (cookiesFile = path);
+
+  const b64 = process.env.GALLERY_DL_COOKIES_B64?.trim();
+  if (b64) {
+    const out = join(tmpdir(), "ping-cookies.txt");
+    await writeFile(out, Buffer.from(b64, "base64"), { mode: 0o600 });
+    return (cookiesFile = out);
+  }
+
+  return (cookiesFile = null);
+}
 
 /** Try yt-dlp (single video / audio). Throws a friendly Error on failure. */
 async function ytdlpDownload(
@@ -279,7 +311,10 @@ async function galleryDownload(
   const dir = join(downloadsDir(), gallerySlug(url));
   await mkdir(dir, { recursive: true });
 
-  const proc = Bun.spawn(["gallery-dl", "--no-mtime", "-D", dir, url], {
+  const cookies = isInstagram(url) ? await resolveCookies() : null;
+  const cookieArgs = cookies ? ["--cookies", cookies] : [];
+
+  const proc = Bun.spawn(["gallery-dl", "--no-mtime", ...cookieArgs, "-D", dir, url], {
     stdout: "pipe",
     stderr: "pipe",
   });

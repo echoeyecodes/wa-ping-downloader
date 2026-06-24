@@ -2,3 +2,5 @@ node_modules/
 downloads/
 .wa-auth/
 .env
+cookies.txt
+gallery-dl

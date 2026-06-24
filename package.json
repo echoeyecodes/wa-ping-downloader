@@ -5,7 +5,8 @@
   "scripts": {
     "ping": "bun run src/index.ts",
     "pair": "bun run src/pair.ts",
-    "bot": "bun run src/bot.ts"
+    "bot": "bun run src/bot.ts",
+    "encode-cookies": "bun run src/encode-cookies.ts"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc13",
