@@ -88,6 +88,7 @@ cp .env.sample .env
 | `PING_DMS`               | `anyone`, `self`, `off` | Who can trigger downloads in direct chats.           |
 | `PING_GROUPS`            | `mention`, `all`, `off` | Group behavior. `mention` = only when you are tagged.|
 | `GALLERY_DL_COOKIES_B64` | base64 string           | Instagram cookies for gallery-dl (optional).         |
+| `WA_AUTH_DIR`            | path                    | Where the WhatsApp session is saved. Default `./.wa-auth`. |
 
 ## Instagram cookies
 
@@ -156,3 +157,21 @@ In Coolify:
 - Set `PING_DMS`, `PING_GROUPS`, `GALLERY_DL_COOKIES_B64` as runtime env vars
   (not build variables).
 - Add persistent storage at `/app/.wa-auth` and `/app/downloads`.
+
+## It asks me to re-pair on every deploy
+
+The WhatsApp session lives in `.wa-auth`. A redeploy starts a fresh container, so
+if that folder is not on a persistent volume, the session is gone and you must
+pair again.
+
+Fix it:
+
+- Make sure `/app/.wa-auth` is mounted to a persistent volume (Coolify: Persistent
+  Storage; `docker run`: `-v ...:/app/.wa-auth`).
+- On startup the app prints `Session will be saved to: <path>`. Check that path is
+  the mounted one.
+- To confirm it persisted, exec into the running container and run
+  `ls /app/.wa-auth` — after pairing it should contain `creds.json` and more.
+
+You can also set `WA_AUTH_DIR` to a path on a volume you already mount (for
+example `WA_AUTH_DIR=/data/wa-auth`).

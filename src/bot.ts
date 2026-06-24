@@ -10,7 +10,7 @@ import type {
 } from "@whiskeysockets/baileys";
 import { config } from "./config";
 import { type Command, download, parseCommand } from "./download";
-import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
+import { AUTH_DIR, extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
 const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
 const ALBUM_VIDEO = ["mp4", "mov", "mkv", "webm", "m4v", "gif"];
@@ -140,7 +140,7 @@ await runSocket({
   onQr: () => {
     if (pairHintShown) return;
     pairHintShown = true;
-    console.log("Not paired yet. Stop this and run: npm run pair");
+    console.log(`Not paired yet (no session in ${AUTH_DIR}). Run: npm run pair`);
   },
   onOpen: (sock) => {
     startedAt = Math.floor(Date.now() / 1000);

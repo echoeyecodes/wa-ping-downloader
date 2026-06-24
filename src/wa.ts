@@ -10,7 +10,7 @@ import {
   type WASocket,
 } from "@whiskeysockets/baileys";
 
-export const AUTH_DIR = `${process.cwd()}/.wa-auth`;
+export const AUTH_DIR = process.env.WA_AUTH_DIR?.trim() || `${process.cwd()}/.wa-auth`;
 
 // Baileys expects a pino-like logger; we don't want its chatter on the CLI.
 const quietLogger: any = {

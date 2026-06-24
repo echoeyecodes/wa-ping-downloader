@@ -2,8 +2,9 @@
 /** `npm run pair` — link this device by scanning a QR code from WhatsApp. */
 
 import qrcode from "qrcode-terminal";
-import { runSocket } from "./wa";
+import { AUTH_DIR, runSocket } from "./wa";
 
+console.log(`Session will be saved to: ${AUTH_DIR}`);
 console.log("Open WhatsApp, go to Settings, Linked Devices, Link a Device, then scan:\n");
 
 await runSocket({
