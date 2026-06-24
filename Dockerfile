@@ -4,10 +4,14 @@ FROM oven/bun:1
 # Installed via pip so the image works on both x86_64 and arm64.
 # yt-dlp nightly tracks YouTube changes fastest; gallery-dl stays stable.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg ca-certificates \
+  && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg ca-certificates unzip curl \
   && pip3 install --no-cache-dir --break-system-packages -U --pre "yt-dlp[default]" \
   && pip3 install --no-cache-dir --break-system-packages -U gallery-dl \
   && rm -rf /var/lib/apt/lists/*
+
+# Deno: yt-dlp uses it to solve YouTube's JS challenge (no challenge = no video).
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
+  && deno --version
 
 WORKDIR /app
 

@@ -204,9 +204,10 @@ async function ytdlpDownload(
       "--newline",
       "--no-warnings",
       "--no-playlist",
-      // Avoid the android_vr client, whose media URLs often 403 on download.
+      // Web/default clients now need a PO token (they return audio-only without
+      // one). These clients still serve video; they need a JS runtime (deno).
       "--extractor-args",
-      "youtube:player_client=default,web_safari",
+      "youtube:player_client=tv_embedded,web_embedded,mweb,android_vr",
       ...cookieArgs,
       ...formatArgs,
       "--exec",
