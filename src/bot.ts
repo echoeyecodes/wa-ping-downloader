@@ -10,7 +10,7 @@ import type {
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import { config } from "./config";
-import { type Command, download, ensureFaststart, parseCommand, videoMeta } from "./download";
+import { type Command, download, parseCommand, videoMeta } from "./download";
 import { linkState, startLinkServer } from "./link";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
@@ -29,11 +29,9 @@ async function mediaContent(path: string): Promise<AnyMessageContent> {
     return { audio: { url: path }, mimetype: e === "mp3" ? "audio/mpeg" : `audio/${e}`, fileName: base };
   }
   if (e === "gif") {
-    await ensureFaststart(path);
     return { video: { url: path }, gifPlayback: true, caption: base, ...(await videoMeta(path)) } as AnyMessageContent;
   }
   if (ALBUM_VIDEO.includes(e)) {
-    await ensureFaststart(path);
     return { video: { url: path }, mimetype: "video/mp4", caption: base, ...(await videoMeta(path)) } as AnyMessageContent;
   }
   if (ALBUM_IMAGE.includes(e)) return { image: { url: path }, caption: base };
@@ -44,7 +42,6 @@ async function mediaContent(path: string): Promise<AnyMessageContent> {
 async function albumChild(path: string, parent: WAMessageKey): Promise<AnyMessageContent> {
   const e = extOf(path);
   if (ALBUM_IMAGE.includes(e)) return { image: { url: path }, albumParentKey: parent };
-  await ensureFaststart(path);
   const meta = await videoMeta(path);
   if (e === "gif") {
     return { video: { url: path }, gifPlayback: true, albumParentKey: parent, ...meta } as AnyMessageContent;

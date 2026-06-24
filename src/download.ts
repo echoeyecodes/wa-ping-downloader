@@ -225,8 +225,12 @@ async function ytdlpDownload(
     throw new Error(noAudio ?? errors.at(-1) ?? `yt-dlp exited with code ${exitCode}.`);
   }
 
-  await removeOtherFormat(paths, format, onEvent);
-  return paths;
+  // Guarantee a standard, broadly playable file (re-encodes only if needed).
+  const finalPaths =
+    format === "mp4" ? await Promise.all(paths.map((p) => normalizeMp4(p, onEvent))) : paths;
+
+  await removeOtherFormat(finalPaths, format, onEvent);
+  return finalPaths;
 }
 
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff", "heic", "avif"]);
@@ -242,16 +246,72 @@ const swapExt = (path: string, ext: string): string => {
  * Move the moov atom to the front (faststart) so the video plays on iOS WhatsApp,
  * which won't start a video whose index is at the end. Stream-copy, no re-encode.
  */
-export async function ensureFaststart(path: string): Promise<void> {
-  if (!["mp4", "mov", "m4v"].includes(extOf(path))) return;
-  const tmp = `${path}.faststart.mp4`;
-  const ok = await ffmpeg(["-i", path, "-c", "copy", "-movflags", "+faststart", tmp]);
+type AVInfo = {
+  vcodec?: string;
+  acodec?: string;
+  pixfmt?: string;
+  aprofile?: string;
+  hasAudio: boolean;
+};
+
+async function probeAV(path: string): Promise<AVInfo> {
+  try {
+    const proc = Bun.spawn(
+      ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,pix_fmt,profile", "-of", "json", path],
+      { stdout: "pipe", stderr: "ignore" },
+    );
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    const streams: Array<Record<string, unknown>> = JSON.parse(out).streams ?? [];
+    const v = streams.find((s) => s.codec_type === "video");
+    const a = streams.find((s) => s.codec_type === "audio");
+    return {
+      vcodec: v?.codec_name as string | undefined,
+      acodec: a?.codec_name as string | undefined,
+      pixfmt: v?.pix_fmt as string | undefined,
+      aprofile: a?.profile as string | undefined,
+      hasAudio: Boolean(a),
+    };
+  } catch {
+    return { hasAudio: false };
+  }
+}
+
+/**
+ * Normalize a video to a broadly playable MP4: H.264 (yuv420p) + AAC-LC with the
+ * moov atom up front. Already-standard streams are copied (fast); VP9/HEVC/AV1 or
+ * HE-AAC are re-encoded. iOS WhatsApp only plays this combination.
+ */
+export async function normalizeMp4(
+  src: string,
+  onEvent?: (event: DownloadEvent) => void,
+): Promise<string> {
+  const info = await probeAV(src);
+  const videoOk = info.vcodec === "h264" && (!info.pixfmt || info.pixfmt === "yuv420p");
+  const audioOk = !info.hasAudio || (info.acodec === "aac" && info.aprofile === "LC");
+
+  const { dir, name } = parsePath(src);
+  const finalPath = join(dir, `${name}.mp4`);
+  const tmp = join(dir, `${name}.norm.mp4`);
+
+  const videoArgs = videoOk
+    ? ["-c:v", "copy"]
+    : ["-c:v", "libx264", "-profile:v", "high", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "23"];
+  const audioArgs = !info.hasAudio ? [] : audioOk ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "128k"];
+
+  if (!videoOk || !audioOk) {
+    onEvent?.({ kind: "processing", label: `Converting ${name} to standard mp4` });
+  }
+
+  const ok = await ffmpeg(["-i", src, ...videoArgs, ...audioArgs, "-movflags", "+faststart", tmp]);
   if (!ok) {
     await rm(tmp).catch(() => {});
-    return;
+    return src;
   }
-  await rm(path).catch(() => {});
-  await rename(tmp, path);
+  if (src !== finalPath) await rm(src).catch(() => {});
+  await rm(finalPath).catch(() => {});
+  await rename(tmp, finalPath);
+  return finalPath;
 }
 
 /** Probe a video for duration (seconds) and dimensions, for nicer WhatsApp playback. */
@@ -305,15 +365,6 @@ async function toMp3(src: string): Promise<string> {
   return out;
 }
 
-async function toMp4(src: string): Promise<string> {
-  const out = swapExt(src, "mp4");
-  let ok = await ffmpeg(["-i", src, "-c", "copy", "-movflags", "+faststart", out]);
-  if (!ok) ok = await ffmpeg(["-i", src, "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", out]);
-  if (!ok) return src;
-  await rm(src).catch(() => {});
-  return out;
-}
-
 /** Apply the requested format to gallery files: videos → mp4/mp3, images kept as-is. */
 async function applyFormat(
   files: string[],
@@ -330,11 +381,8 @@ async function applyFormat(
     if (format === "mp3") {
       onEvent?.({ kind: "processing", label: `Extracting audio from ${parsePath(file).base}` });
       result.push(await toMp3(file));
-    } else if (ext !== "mp4") {
-      onEvent?.({ kind: "processing", label: `Converting ${parsePath(file).base} to mp4` });
-      result.push(await toMp4(file));
     } else {
-      result.push(file);
+      result.push(await normalizeMp4(file, onEvent));
     }
   }
   return result;
