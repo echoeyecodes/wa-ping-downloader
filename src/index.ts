@@ -114,13 +114,15 @@ const ui = (() => {
 async function main(): Promise<void> {
   const argv = Bun.argv.slice(2);
 
-  // `card` flag: render a tweet's caption + author into a saved PNG.
+  // `card` flag: render a post into an image card. Add `mp4` for a video card
+  // (IG/TikTok video posts play inside the card).
   if (argv.includes("card")) {
     const url = argv.find((a) => /^https?:\/\//i.test(a));
-    if (!url) fail("Provide a tweet URL, e.g. npm run ping \"<tweet>\" card");
+    if (!url) fail('Provide a post URL, e.g. npm run ping "<tweet>" card');
+    const video = argv.includes("mp4");
     ui.spin(`Building card for ${url}`);
     try {
-      const out = await saveCard(url);
+      const out = await saveCard(url, { video });
       ui.done();
       ui.think("Saved card:");
       console.log(pathToFileURL(out).href);

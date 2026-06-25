@@ -85,20 +85,20 @@ function shouldHandle(jid: string, msg: WAMessage, sock: WASocket): boolean {
 
   if (jid.endsWith("@g.us")) {
     if (config.groups === "off") return false;
-    if (fromMe) return false; // don't act on my own group posts
+    if (fromMe) return false;
     if (config.groups === "mention") return isMentioned(msg, sock);
-    return true; // "all"
+    return true;
   }
 
   if (jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")) {
     if (config.dms === "off") return false;
     const self = isSelfChat(jid, sock);
-    if (fromMe && !self) return false; // my outgoing DMs to other people
+    if (fromMe && !self) return false;
     if (config.dms === "self") return self;
-    return true; // "anyone" (incoming from others, plus my self-chat)
+    return true;
   }
 
-  return false; // broadcasts, status, newsletters, etc.
+  return false;
 }
 
 /** Show the "typing…" indicator until stop() is called, refreshing so it stays on. */
@@ -116,12 +116,22 @@ function startTyping(sock: WASocket, jid: string): () => void {
   };
 }
 
-async function handleCard(sock: WASocket, jid: string, msg: WAMessage, url: string): Promise<void> {
+async function handleCard(
+  sock: WASocket,
+  jid: string,
+  msg: WAMessage,
+  url: string,
+  video: boolean,
+): Promise<void> {
   const stopTyping = startTyping(sock, jid);
   try {
-    const path = await saveCard(url);
+    const path = await saveCard(url, { video });
     stopTyping();
-    await sock.sendMessage(jid, { image: { url: path } }, { quoted: msg });
+    const content: AnyMessageContent =
+      parsePath(path).ext.toLowerCase() === ".mp4"
+        ? ({ video: { url: path }, mimetype: "video/mp4", ...(await videoMeta(path)) } as AnyMessageContent)
+        : { image: { url: path } };
+    await sock.sendMessage(jid, content, { quoted: msg });
   } catch (err) {
     stopTyping();
     await sock.sendMessage(
@@ -210,9 +220,9 @@ await runSocket({
       const body = extractText(msg);
       const command = parseCommand(body);
       if (!command) continue;
-      // "card" + a tweet/Instagram link → render a card image instead of downloading.
+      // "card" + a post link → render a card. Add "mp4" for a playing video card.
       if (/\bcard\b/i.test(body) && isCardUrl(command.url)) {
-        await handleCard(sock, jid, msg, command.url);
+        await handleCard(sock, jid, msg, command.url, /\bmp4\b/i.test(body));
         continue;
       }
       await handleCommand(sock, jid, msg, command);

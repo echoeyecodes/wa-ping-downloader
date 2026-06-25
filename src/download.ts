@@ -43,7 +43,7 @@ function isPlaylistUrl(url: string): boolean {
   try {
     const u = new URL(url);
     const host = u.hostname.replace(/^(www|m|music)\./, "");
-    if (host === "youtu.be") return false; // short links are single videos
+    if (host === "youtu.be") return false;
     if (!host.endsWith("youtube.com")) return false;
     if (u.pathname.startsWith("/playlist")) return true;
     return u.searchParams.has("list") && !u.searchParams.has("v");
@@ -66,7 +66,6 @@ async function removeOtherFormat(
       await rm(sibling);
       onEvent?.({ kind: "removed", file: `${name}.${other}` });
     } catch {
-      // no counterpart file to clean up
     }
   }
 }
@@ -139,7 +138,7 @@ async function pump(
 
 const NO_AUDIO = "no audio track";
 
-let cookiesFile: string | null | undefined; // undefined = not resolved yet
+let cookiesFile: string | null | undefined;
 
 function isInstagram(url: string): boolean {
   try {
@@ -234,7 +233,6 @@ async function ytdlpDownload(
     throw new Error(noAudio ?? errors.at(-1) ?? `yt-dlp exited with code ${exitCode}.`);
   }
 
-  // Guarantee a standard, broadly playable file (re-encodes only if needed).
   const finalPaths =
     format === "mp4" ? await Promise.all(paths.map((p) => normalizeMp4(p, onEvent))) : paths;
 
@@ -384,7 +382,7 @@ async function applyFormat(
   for (const file of files) {
     const ext = extOf(file);
     if (!VIDEO_EXTS.has(ext)) {
-      result.push(file); // images (and anything else) saved as-is
+      result.push(file);
       continue;
     }
     if (format === "mp3") {

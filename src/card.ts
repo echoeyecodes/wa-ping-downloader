@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Resvg } from "@resvg/resvg-js";
 import satori from "satori";
-import { downloadsDir, resolveCookies } from "./download";
+import { download, downloadsDir, resolveCookies } from "./download";
+
+const RENDER_SCALE = 2;
 
 type Author = { name: string; handle: string; avatar: string | null };
 type Media = { url: string; video: boolean; width: number; height: number };
@@ -17,7 +19,6 @@ function tweetId(url: string): string | null {
   return url.match(/status(?:es)?\/(\d+)/i)?.[1] ?? null;
 }
 
-// The soft token the embed widget derives from the id.
 function syndToken(id: string): string {
   return ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, "");
 }
@@ -31,12 +32,10 @@ async function getTweet(id: string): Promise<Record<string, any> | null> {
   return data;
 }
 
-// Convert "fancy" Unicode (math-bold/italic/script, fullwidth, etc.) back to
-// plain letters the bundled font can draw, so names don't render as tofu boxes.
 function normalizeText(s: string): string {
   return String(s ?? "")
     .normalize("NFKC")
-    .replace(/︎/g, ""); // text-style variation selector
+    .replace(/︎/g, "");
 }
 
 function authorOf(d: Record<string, any>): Author {
@@ -49,7 +48,6 @@ function authorOf(d: Record<string, any>): Author {
   };
 }
 
-// Replace t.co links with their readable form and drop the trailing media link.
 function cleanText(d: Record<string, any>): string {
   let t = String(d.text ?? "");
   for (const u of d.entities?.urls ?? []) {
@@ -73,7 +71,7 @@ function toTweet(d: Record<string, any>): Tweet {
 
 function mediaOf(d: Record<string, any>): Media[] {
   return (d.mediaDetails ?? []).slice(0, 4).map((m: Record<string, any>) => ({
-    url: String(m.media_url_https ?? ""), // for video this is the poster frame
+    url: String(m.media_url_https ?? ""),
     video: m.type === "video" || m.type === "animated_gif",
     width: Number(m.original_info?.width) || 0,
     height: Number(m.original_info?.height) || 0,
@@ -88,7 +86,6 @@ type LinkCard = {
   image: { url: string; width: number; height: number } | null;
 };
 
-// The link-preview ("unfurl") card some tweets carry, from card.binding_values.
 function linkCardOf(d: Record<string, any>): LinkCard | null {
   const c = d.card;
   if (!c?.binding_values) return null;
@@ -97,7 +94,7 @@ function linkCardOf(d: Record<string, any>): LinkCard | null {
 
   const title = str("title");
   const domain = str("vanity_url") || str("domain");
-  if (!title && !domain) return null; // polls/players without an unfurl — skip
+  if (!title && !domain) return null;
 
   const large = c.name === "summary_large_image" || String(c.name).startsWith("player");
   const keys = large
@@ -175,10 +172,11 @@ const compact = (n: number): string => {
 
 const GRAY = "#536471";
 const ACCENT = "#1d9bf0";
-const INNER = 576; // 640 width - 32 padding each side
-const QUOTE_INNER = 544; // INNER minus the quote box's 16px padding each side
-const MEDIA_H = 320; // grid block height
-const MEDIA_MAX_H = 720; // cap for a single (tall) image
+const SENTINEL = "#fe00ff";
+const INNER = 576;
+const QUOTE_INNER = 544;
+const MEDIA_H = 320;
+const MEDIA_MAX_H = 720;
 const GAP = 4;
 
 const PLAY_URI = `data:image/svg+xml;base64,${Buffer.from(
@@ -192,7 +190,6 @@ const text = (value: string, style: Record<string, unknown>) => ({
   props: { style: { display: "flex", ...style }, children: value },
 });
 
-// Mentions, hashtags, and links get the Twitter-blue accent.
 function isEntity(word: string): boolean {
   const w = word.replace(/[)\].,!?:;"'»]+$/, "");
   if (/^[@#]\w/.test(w)) return true;
@@ -200,7 +197,6 @@ function isEntity(word: string): boolean {
   return /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(w);
 }
 
-// Inline rich text with per-word coloring; wraps like normal text.
 function richText(content: string, fontSize: number, lineHeight: number, marginTop = 0) {
   const children: unknown[] = [];
   content.split("\n").forEach((line, li) => {
@@ -258,7 +254,10 @@ function authorRow(a: Author, avatar: string | null, size: number, nameSize: num
   };
 }
 
-function imageTile(uri: string, w: number, h: number, video: boolean, radius = 0) {
+function imageTile(uri: string, w: number, h: number, video: boolean, radius = 0, sentinel = false) {
+  if (sentinel) {
+    return { type: "div", props: { style: { display: "flex", width: w, height: h, backgroundColor: SENTINEL } } };
+  }
   const img = {
     type: "img",
     props: { src: uri, width: w, height: h, style: { objectFit: "cover", borderRadius: radius } },
@@ -295,6 +294,7 @@ function buildMedia(
   gridH: number,
   maxH: number,
   radius: number,
+  sentinel = false,
 ): { node: unknown; height: number } {
   const row = (children: unknown[]) => ({
     type: "div",
@@ -319,7 +319,7 @@ function buildMedia(
       type: "div",
       props: {
         style: { display: "flex", marginTop: 16, justifyContent: w < fullW ? "center" : "flex-start" },
-        children: [imageTile(it.uri, w, h, it.video, radius)],
+        children: [imageTile(it.uri, w, h, it.video, radius, sentinel)],
       },
     };
     return { node, height: h + 16 };
@@ -352,7 +352,6 @@ function buildMedia(
   return { node, height: gridH + 16 };
 }
 
-// Twitter-style link preview: large image on top, or a small left thumbnail.
 function buildLinkCard(info: LinkCard, imageUri: string | null): { node: unknown; height: number } {
   const domainNode = info.domain ? text(info.domain, { fontSize: 16, color: GRAY }) : null;
   const titleNode = text(info.title, { fontSize: 20, fontWeight: 700, marginTop: 2, color: "#0f1419" });
@@ -489,32 +488,27 @@ function cardElement(
 const lineCount = (s: string, perLine: number): number =>
   s.split("\n").reduce((acc, line) => acc + Math.max(1, Math.ceil(line.length / perLine)), 0);
 
-/** Render a satori element tree to a PNG file in downloads/ and return its path. */
-async function renderToFile(
-  element: unknown,
-  width: number,
-  height: number,
-  outName: string,
-): Promise<string> {
+async function renderSvg(element: unknown, width: number, height: number): Promise<string> {
   const fontDir = join(import.meta.dir, "..", "assets");
   const [regular, bold, symbols] = await Promise.all([
     Bun.file(join(fontDir, "Sans-Regular.ttf")).arrayBuffer(),
     Bun.file(join(fontDir, "Sans-Bold.ttf")).arrayBuffer(),
     Bun.file(join(fontDir, "Symbols.woff")).arrayBuffer(),
   ]);
-
-  const svg = await satori(element as never, {
+  return satori(element as never, {
     width,
     height,
     fonts: [
       { name: "Sans", data: regular, weight: 400, style: "normal" },
       { name: "Sans", data: bold, weight: 700, style: "normal" },
-      { name: "Symbols", data: symbols, weight: 400, style: "normal" }, // dingbats fallback
+      { name: "Symbols", data: symbols, weight: 400, style: "normal" },
     ],
     loadAdditionalAsset: async (code, segment) => (code === "emoji" ? loadEmoji(segment) : ""),
   });
+}
 
-  const png = new Resvg(svg, { fitTo: { mode: "width", value: width * 2 } }).render().asPng();
+async function rasterize(svg: string, width: number, outName: string): Promise<string> {
+  const png = new Resvg(svg, { fitTo: { mode: "width", value: width * RENDER_SCALE } }).render().asPng();
   const outDir = downloadsDir();
   await mkdir(outDir, { recursive: true });
   const out = join(outDir, outName);
@@ -522,15 +516,51 @@ async function renderToFile(
   return out;
 }
 
-/** Render a card for a tweet, Instagram post, or TikTok depending on the URL. */
-export async function saveCard(url: string): Promise<string> {
-  if (/tiktok\.com/i.test(url)) return saveTikTokCard(url);
-  if (/instagram\.com/i.test(url)) return saveIgCard(url);
-  return saveTweetCard(url);
+/** Render a satori element tree to a PNG file in downloads/ and return its path. */
+async function renderToFile(element: unknown, width: number, height: number, outName: string): Promise<string> {
+  return rasterize(await renderSvg(element, width, height), width, outName);
+}
+
+function sentinelRect(svg: string): { x: number; y: number; w: number; h: number } | null {
+  const m = svg.match(new RegExp(`<rect [^>]*fill="${SENTINEL}"[^>]*/>`));
+  if (!m) return null;
+  const r = m[0];
+  const num = (attr: string) => Number(r.match(new RegExp(`${attr}="([\\d.]+)"`))?.[1] ?? 0);
+  return {
+    x: Math.round(num("x") * RENDER_SCALE),
+    y: Math.round(num("y") * RENDER_SCALE),
+    w: Math.round(num("width") * RENDER_SCALE),
+    h: Math.round(num("height") * RENDER_SCALE),
+  };
+}
+
+async function renderToVideo(
+  element: unknown,
+  width: number,
+  height: number,
+  outBase: string,
+  sourceUrl: string,
+): Promise<string> {
+  const svg = await renderSvg(element, width, height);
+  const rect = sentinelRect(svg);
+  const png = await rasterize(svg, width, `${outBase}.png`);
+  if (!rect) return png;
+  return compositeCardVideo(png, sourceUrl, rect, `${outBase}.mp4`);
+}
+
+/**
+ * Render a card for a tweet, Instagram post, or TikTok depending on the URL.
+ * With `video: true`, IG/TikTok video posts return an mp4 with the clip playing
+ * inside the card; otherwise a PNG is returned.
+ */
+export async function saveCard(url: string, opts: { video?: boolean } = {}): Promise<string> {
+  if (/tiktok\.com/i.test(url)) return saveTikTokCard(url, opts);
+  if (/instagram\.com/i.test(url)) return saveIgCard(url, opts);
+  return saveTweetCard(url, opts);
 }
 
 /** Fetch a tweet via the syndication API and save a rendered card PNG. */
-async function saveTweetCard(url: string): Promise<string> {
+async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> {
   const id = tweetId(url);
   if (!id) throw new Error("That doesn't look like a tweet URL.");
 
@@ -543,7 +573,6 @@ async function saveTweetCard(url: string): Promise<string> {
   const media = mediaOf(data);
   const quoted = data.quoted_tweet ? toTweet(data.quoted_tweet) : null;
   const quotedMedia = data.quoted_tweet ? mediaOf(data.quoted_tweet) : [];
-  // Only show a link card when there's no other media (matches Twitter).
   const link = media.length === 0 ? linkCardOf(data) : null;
 
   const [mainAvatar, quotedAvatar, mainUris, quotedUris, linkImg] = await Promise.all([
@@ -560,8 +589,9 @@ async function saveTweetCard(url: string): Promise<string> {
       .map((m, i) => ({ uri: uris[i], video: m.video, width: m.width, height: m.height }))
       .filter((m): m is MediaItem => Boolean(m.uri));
 
+  const wantVideo = Boolean(opts.video && media.length === 1 && media[0].video);
   const built = toItems(media, mainUris).length
-    ? buildMedia(toItems(media, mainUris), INNER, MEDIA_H, MEDIA_MAX_H, 16)
+    ? buildMedia(toItems(media, mainUris), INNER, MEDIA_H, MEDIA_MAX_H, 16, wantVideo)
     : null;
   const quotedBuilt = toItems(quotedMedia, quotedUris).length
     ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12)
@@ -582,7 +612,9 @@ async function saveTweetCard(url: string): Promise<string> {
     quotedAvatar,
     quotedBuilt?.node ?? null,
   );
-  return renderToFile(element, width, height, `tweet ${main.author.handle || id} [${id}].png`);
+  const outBase = `tweet ${main.author.handle || id} [${id}]`;
+  if (wantVideo) return renderToVideo(element, width, height, outBase, url);
+  return renderToFile(element, width, height, `${outBase}.png`);
 }
 
 // --- Instagram (gallery-dl, needs IG cookies) ---
@@ -616,7 +648,6 @@ function findDeep(node: unknown, pred: (o: Record<string, any>) => boolean): Rec
   return null;
 }
 
-// One frame from a video, as a poster image (IG reels carry no thumbnail).
 async function videoPoster(url: string): Promise<string | null> {
   const tmp = join(tmpdir(), `ping-poster-${Math.floor(Math.random() * 1e9)}.jpg`);
   const proc = Bun.spawn(
@@ -649,7 +680,6 @@ async function fetchIgPost(url: string): Promise<IgPost> {
   try {
     data = JSON.parse(out);
   } catch {
-    // handled below
   }
 
   const post = Array.isArray(data)
@@ -675,7 +705,7 @@ async function fetchIgPost(url: string): Promise<IgPost> {
         width: Number(m.width) || 0,
         height: Number(m.height) || 0,
       };
-      break; // first item only (carousels)
+      break;
     }
   }
 
@@ -690,7 +720,6 @@ async function fetchIgPost(url: string): Promise<IgPost> {
   };
 }
 
-// Caption: bold username then the text, with @mentions/#hashtags accented.
 function captionText(username: string, caption: string) {
   const children: unknown[] = [
     { type: "div", props: { style: { display: "flex", whiteSpace: "pre", fontSize: 18, fontWeight: 700 }, children: `${username} ` } },
@@ -752,40 +781,82 @@ function igCardElement(post: IgPost, avatarUri: string | null, mediaNode: unknow
   };
 }
 
-// Shared renderer for the post-style card (Instagram, TikTok).
+type CardOpts = { video?: boolean; url?: string };
+
+async function compositeCardVideo(
+  cardPng: string,
+  url: string,
+  rect: { x: number; y: number; w: number; h: number },
+  outName: string,
+): Promise<string> {
+  let video: string | undefined;
+  try {
+    video = (await download({ url, format: "mp4" }))[0];
+  } catch {
+    video = undefined;
+  }
+  if (!video) return cardPng;
+
+  const out = join(downloadsDir(), outName);
+  const filter =
+    `[1:v]scale=${rect.w}:${rect.h}:force_original_aspect_ratio=increase,` +
+    `crop=${rect.w}:${rect.h},setsar=1[ov];` +
+    `[0:v][ov]overlay=${rect.x}:${rect.y}:shortest=1[v]`;
+  const proc = Bun.spawn(
+    [
+      "ffmpeg", "-y", "-loglevel", "error",
+      "-loop", "1", "-i", cardPng,
+      "-i", video,
+      "-filter_complex", filter,
+      "-map", "[v]", "-map", "1:a?",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "23",
+      "-c:a", "aac", "-movflags", "+faststart", "-shortest",
+      out,
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  return (await proc.exited) === 0 ? out : cardPng;
+}
+
 async function renderPostCard(
   post: IgPost,
   avatarUri: string | null,
   mediaUri: string | null,
-  outName: string,
+  outBase: string,
+  opts: CardOpts = {},
 ): Promise<string> {
   const width = 640;
+  const headerH = 72;
+  const wantVideo = Boolean(opts.video && opts.url && post.media?.video);
   let mediaH = 0;
   let mediaNode: unknown | null = null;
-  if (post.media && mediaUri) {
+  if (post.media && (mediaUri || wantVideo)) {
     const nw = post.media.width || 1;
     const nh = post.media.height || 1;
     mediaH = Math.min(800, Math.round((width * nh) / nw));
-    mediaNode = imageTile(mediaUri, width, mediaH, post.media.video, 0);
+    mediaNode = wantVideo
+      ? imageTile("", width, mediaH, false, 0, true)
+      : imageTile(mediaUri as string, width, mediaH, post.media.video, 0);
   }
 
   const captionLines = post.caption ? lineCount(`${post.username} ${post.caption}`, 40) : 0;
-  const height = 72 + mediaH + 12 + 24 + captionLines * 26 + 26 + 12;
+  const height = headerH + mediaH + 12 + 24 + captionLines * 26 + 26 + 12;
 
-  return renderToFile(igCardElement(post, avatarUri, mediaNode), width, height, outName);
+  const element = igCardElement(post, avatarUri, mediaNode);
+  if (wantVideo) return renderToVideo(element, width, height, outBase, opts.url as string);
+  return renderToFile(element, width, height, `${outBase}.png`);
 }
 
-async function saveIgCard(url: string): Promise<string> {
+async function saveIgCard(url: string, opts: CardOpts = {}): Promise<string> {
   const post = await fetchIgPost(url);
   const [avatarUri, mediaUri] = await Promise.all([
     fetchImage(post.avatar),
     post.media ? (post.media.video ? videoPoster(post.media.url) : fetchImage(post.media.url)) : Promise.resolve(null),
   ]);
   const shortcode = url.match(/\/(?:p|reel|tv)\/([^/?]+)/i)?.[1] ?? "ig";
-  return renderPostCard(post, avatarUri, mediaUri, `ig ${post.username} [${shortcode}].png`);
+  return renderPostCard(post, avatarUri, mediaUri, `ig ${post.username} [${shortcode}]`, { ...opts, url });
 }
 
-// yt-dlp doesn't expose the creator avatar; it's in the video page's data blob.
 async function tiktokAvatar(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
@@ -803,7 +874,6 @@ async function tiktokAvatar(url: string): Promise<string | null> {
   }
 }
 
-// yt-dlp gives TikTok's metadata + a thumbnail (its own poster) with no auth.
 async function fetchTikTok(url: string): Promise<IgPost> {
   const proc = Bun.spawn(["yt-dlp", "-j", "--no-warnings", "--no-playlist", url], {
     stdout: "pipe",
@@ -820,7 +890,6 @@ async function fetchTikTok(url: string): Promise<IgPost> {
   try {
     d = JSON.parse(out);
   } catch {
-    // handled below
   }
   if (!d || typeof d !== "object") {
     const last = errText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1);
@@ -834,20 +903,19 @@ async function fetchTikTok(url: string): Promise<IgPost> {
     caption: normalizeText(d.description ?? d.title ?? ""),
     likes: Number(d.like_count) || 0,
     date: ymd.length === 8 ? `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}` : "",
-    avatar, // scraped from the page (yt-dlp doesn't expose it)
+    avatar,
     media: d.thumbnail
       ? { url: String(d.thumbnail), video: true, width: Number(d.width) || 0, height: Number(d.height) || 0 }
       : null,
   };
 }
 
-async function saveTikTokCard(url: string): Promise<string> {
+async function saveTikTokCard(url: string, opts: CardOpts = {}): Promise<string> {
   const post = await fetchTikTok(url);
-  // The TikTok thumbnail is already an image (yt-dlp's poster), so fetch it directly.
   const [avatarUri, mediaUri] = await Promise.all([
     fetchImage(post.avatar),
     post.media ? fetchImage(post.media.url) : Promise.resolve(null),
   ]);
   const id = url.match(/video\/(\d+)/i)?.[1] ?? "tiktok";
-  return renderPostCard(post, avatarUri, mediaUri, `tiktok ${post.username} [${id}].png`);
+  return renderPostCard(post, avatarUri, mediaUri, `tiktok ${post.username} [${id}]`, { ...opts, url });
 }

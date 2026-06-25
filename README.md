@@ -50,9 +50,10 @@ bun install
 ## Command line
 
 ```bash
-npm run ping "<url>"            # download as mp4
-npm run ping "<url>" mp3        # download as mp3
-npm run ping "<post-url>" card  # render a tweet / Instagram / TikTok as an image card
+npm run ping "<url>"               # download as mp4
+npm run ping "<url>" mp3           # download as mp3
+npm run ping "<post-url>" card     # render a tweet / Instagram / TikTok as an image card
+npm run ping "<post-url>" card mp4 # video card: the clip plays inside the card
 ```
 
 Files are saved to `downloads/`. The local file URL is printed at the end.
@@ -65,6 +66,10 @@ The `card` mode renders a post into a PNG that looks like the real thing:
   so it needs your Instagram cookies (see Cookies below).
 - **TikTok** — creator, the video thumbnail, likes, and caption. Uses yt-dlp, no
   login needed.
+
+For any video post (tweet, Instagram, or TikTok), add `mp4` (CLI) or include
+`mp4` in the message (bot) to get a **video card** — an mp4 where the clip plays
+inside the card while the header, text, likes, and caption stay around it.
 
 ## WhatsApp bot
 
