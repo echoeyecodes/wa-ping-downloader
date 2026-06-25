@@ -31,11 +31,19 @@ async function getTweet(id: string): Promise<Record<string, any> | null> {
   return data;
 }
 
+// Convert "fancy" Unicode (math-bold/italic/script, fullwidth, etc.) back to
+// plain letters the bundled font can draw, so names don't render as tofu boxes.
+function normalizeText(s: string): string {
+  return String(s ?? "")
+    .normalize("NFKC")
+    .replace(/︎/g, ""); // text-style variation selector
+}
+
 function authorOf(d: Record<string, any>): Author {
   const u = d.user ?? {};
   const avatar = String(u.profile_image_url_https ?? "").replace("_normal", "_400x400");
   return {
-    name: String(u.name ?? "Unknown"),
+    name: normalizeText(u.name ?? "Unknown"),
     handle: String(u.screen_name ?? ""),
     avatar: avatar || null,
   };
@@ -50,7 +58,7 @@ function cleanText(d: Record<string, any>): string {
   for (const m of d.entities?.media ?? []) {
     if (m.url) t = t.split(m.url).join("");
   }
-  return t.trim();
+  return normalizeText(t).trim();
 }
 
 function toTweet(d: Record<string, any>): Tweet {
@@ -131,15 +139,57 @@ const compact = (n: number): string => {
 };
 
 const GRAY = "#536471";
+const ACCENT = "#1d9bf0";
 const INNER = 576; // 640 width - 32 padding each side
 const MEDIA_H = 320; // grid block height
 const MEDIA_MAX_H = 720; // cap for a single (tall) image
 const GAP = 4;
 
+const PLAY_URI = `data:image/svg+xml;base64,${Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">' +
+    '<circle cx="32" cy="32" r="32" fill="#000" fill-opacity="0.55"/>' +
+    '<path d="M25 19 L47 32 L25 45 Z" fill="#fff"/></svg>',
+).toString("base64")}`;
+
 const text = (value: string, style: Record<string, unknown>) => ({
   type: "div",
   props: { style: { display: "flex", ...style }, children: value },
 });
+
+// Mentions, hashtags, and links get the Twitter-blue accent.
+function isEntity(word: string): boolean {
+  const w = word.replace(/[)\].,!?:;"'»]+$/, "");
+  if (/^[@#]\w/.test(w)) return true;
+  if (/^https?:\/\//i.test(w)) return true;
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(w);
+}
+
+// Inline rich text with per-word coloring; wraps like normal text.
+function richText(content: string, fontSize: number, lineHeight: number, marginTop = 0) {
+  const children: unknown[] = [];
+  content.split("\n").forEach((line, li) => {
+    if (li > 0) children.push({ type: "div", props: { style: { display: "flex", width: "100%", height: 0 } } });
+    for (const tok of line.match(/\S+\s*/g) ?? []) {
+      children.push({
+        type: "div",
+        props: {
+          style: {
+            display: "flex",
+            whiteSpace: "pre",
+            fontSize,
+            lineHeight,
+            color: isEntity(tok.trimEnd()) ? ACCENT : undefined,
+          },
+          children: tok,
+        },
+      });
+    }
+  });
+  return {
+    type: "div",
+    props: { style: { display: "flex", flexWrap: "wrap", marginTop }, children },
+  };
+}
 
 function avatarNode(src: string | null, size: number) {
   return src
@@ -189,45 +239,11 @@ function imageTile(uri: string, w: number, h: number, video: boolean, radius = 0
           props: {
             style: {
               position: "absolute",
-              top: 0,
-              left: 0,
-              width: w,
-              height: h,
+              top: (h - 64) / 2,
+              left: (w - 64) / 2,
               display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
             },
-            children: [
-              {
-                type: "div",
-                props: {
-                  style: {
-                    width: 64,
-                    height: 64,
-                    borderRadius: 32,
-                    backgroundColor: "rgba(0,0,0,0.55)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  },
-                  children: [
-                    {
-                      type: "div",
-                      props: {
-                        style: {
-                          width: 0,
-                          height: 0,
-                          marginLeft: 6,
-                          borderTop: "12px solid transparent",
-                          borderBottom: "12px solid transparent",
-                          borderLeft: "20px solid white",
-                        },
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
+            children: [{ type: "img", props: { src: PLAY_URI, width: 64, height: 64 } }],
           },
         },
       ],
@@ -306,10 +322,7 @@ function quotedBox(q: Tweet, avatar: string | null) {
         border: "1px solid #cfd9de",
         borderRadius: 16,
       },
-      children: [
-        authorRow(q.author, avatar, 32, 18),
-        text(q.text, { fontSize: 20, lineHeight: 1.3, marginTop: 8, whiteSpace: "pre-wrap", color: "#0f1419" }),
-      ],
+      children: [authorRow(q.author, avatar, 32, 18), richText(q.text, 20, 1.3, 8)],
     },
   };
 }
@@ -322,9 +335,7 @@ function cardElement(
   quotedAvatar: string | null,
 ): unknown {
   const children: unknown[] = [authorRow(main.author, mainAvatar, 56, 24)];
-  if (main.text) {
-    children.push(text(main.text, { fontSize: 28, lineHeight: 1.35, marginTop: 20, whiteSpace: "pre-wrap" }));
-  }
+  if (main.text) children.push(richText(main.text, 28, 1.35, 20));
   if (mediaNode) children.push(mediaNode);
   if (quoted) children.push(quotedBox(quoted, quotedAvatar));
   children.push({
