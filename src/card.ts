@@ -141,6 +141,7 @@ const compact = (n: number): string => {
 const GRAY = "#536471";
 const ACCENT = "#1d9bf0";
 const INNER = 576; // 640 width - 32 padding each side
+const QUOTE_INNER = 544; // INNER minus the quote box's 16px padding each side
 const MEDIA_H = 320; // grid block height
 const MEDIA_MAX_H = 720; // cap for a single (tall) image
 const GAP = 4;
@@ -253,7 +254,13 @@ function imageTile(uri: string, w: number, h: number, video: boolean, radius = 0
 
 type MediaItem = { uri: string; video: boolean; width: number; height: number };
 
-function buildMedia(items: MediaItem[]): { node: unknown; height: number } {
+function buildMedia(
+  items: MediaItem[],
+  fullW: number,
+  gridH: number,
+  maxH: number,
+  radius: number,
+): { node: unknown; height: number } {
   const row = (children: unknown[]) => ({
     type: "div",
     props: { style: { display: "flex", gap: GAP }, children },
@@ -267,30 +274,30 @@ function buildMedia(items: MediaItem[]): { node: unknown; height: number } {
     const it = items[0];
     const nw = it.width || 16;
     const nh = it.height || 9;
-    let w = INNER;
-    let h = Math.round((INNER * nh) / nw);
-    if (h > MEDIA_MAX_H) {
-      h = MEDIA_MAX_H;
-      w = Math.round((MEDIA_MAX_H * nw) / nh);
+    let w = fullW;
+    let h = Math.round((fullW * nh) / nw);
+    if (h > maxH) {
+      h = maxH;
+      w = Math.round((maxH * nw) / nh);
     }
     const node = {
       type: "div",
       props: {
-        style: { display: "flex", marginTop: 16, justifyContent: w < INNER ? "center" : "flex-start" },
-        children: [imageTile(it.uri, w, h, it.video, 16)],
+        style: { display: "flex", marginTop: 16, justifyContent: w < fullW ? "center" : "flex-start" },
+        children: [imageTile(it.uri, w, h, it.video, radius)],
       },
     };
     return { node, height: h + 16 };
   }
 
-  const w = (INNER - GAP) / 2;
-  const h = (MEDIA_H - GAP) / 2;
+  const w = (fullW - GAP) / 2;
+  const h = (gridH - GAP) / 2;
   let inner: unknown;
   if (items.length === 2) {
-    inner = row(items.map((m) => imageTile(m.uri, w, MEDIA_H, m.video)));
+    inner = row(items.map((m) => imageTile(m.uri, w, gridH, m.video)));
   } else if (items.length === 3) {
     inner = row([
-      imageTile(items[0].uri, w, MEDIA_H, items[0].video),
+      imageTile(items[0].uri, w, gridH, items[0].video),
       col([imageTile(items[1].uri, w, h, items[1].video), imageTile(items[2].uri, w, h, items[2].video)]),
     ]);
   } else {
@@ -303,14 +310,17 @@ function buildMedia(items: MediaItem[]): { node: unknown; height: number } {
   const node = {
     type: "div",
     props: {
-      style: { display: "flex", marginTop: 16, borderRadius: 16, overflow: "hidden" },
+      style: { display: "flex", marginTop: 16, borderRadius: radius, overflow: "hidden" },
       children: [inner],
     },
   };
-  return { node, height: MEDIA_H + 16 };
+  return { node, height: gridH + 16 };
 }
 
-function quotedBox(q: Tweet, avatar: string | null) {
+function quotedBox(q: Tweet, avatar: string | null, mediaNode: unknown | null) {
+  const children: unknown[] = [authorRow(q.author, avatar, 32, 18)];
+  if (q.text) children.push(richText(q.text, 20, 1.3, 8));
+  if (mediaNode) children.push(mediaNode);
   return {
     type: "div",
     props: {
@@ -322,7 +332,7 @@ function quotedBox(q: Tweet, avatar: string | null) {
         border: "1px solid #cfd9de",
         borderRadius: 16,
       },
-      children: [authorRow(q.author, avatar, 32, 18), richText(q.text, 20, 1.3, 8)],
+      children,
     },
   };
 }
@@ -333,11 +343,12 @@ function cardElement(
   mediaNode: unknown | null,
   quoted: Tweet | null,
   quotedAvatar: string | null,
+  quotedMediaNode: unknown | null,
 ): unknown {
   const children: unknown[] = [authorRow(main.author, mainAvatar, 56, 24)];
   if (main.text) children.push(richText(main.text, 28, 1.35, 20));
   if (mediaNode) children.push(mediaNode);
-  if (quoted) children.push(quotedBox(quoted, quotedAvatar));
+  if (quoted) children.push(quotedBox(quoted, quotedAvatar, quotedMediaNode));
   children.push({
     type: "div",
     props: {
@@ -384,30 +395,48 @@ export async function saveCard(url: string): Promise<string> {
   const main = toTweet(data);
   const media = mediaOf(data);
   const quoted = data.quoted_tweet ? toTweet(data.quoted_tweet) : null;
+  const quotedMedia = data.quoted_tweet ? mediaOf(data.quoted_tweet) : [];
 
-  const [mainAvatar, quotedAvatar, ...mediaUris] = await Promise.all([
+  const [mainAvatar, quotedAvatar, mainUris, quotedUris] = await Promise.all([
     fetchImage(main.author.avatar),
     quoted ? fetchImage(quoted.author.avatar) : Promise.resolve(null),
-    ...media.map((m) => fetchImage(m.url)),
+    Promise.all(media.map((m) => fetchImage(m.url))),
+    Promise.all(quotedMedia.map((m) => fetchImage(m.url))),
   ]);
-  const mediaItems = media
-    .map((m, i) => ({ uri: mediaUris[i], video: m.video, width: m.width, height: m.height }))
-    .filter((m): m is MediaItem => Boolean(m.uri));
-  const built = mediaItems.length ? buildMedia(mediaItems) : null;
+
+  const toItems = (ms: Media[], uris: (string | null)[]): MediaItem[] =>
+    ms
+      .map((m, i) => ({ uri: uris[i], video: m.video, width: m.width, height: m.height }))
+      .filter((m): m is MediaItem => Boolean(m.uri));
+
+  const built = toItems(media, mainUris).length
+    ? buildMedia(toItems(media, mainUris), INNER, MEDIA_H, MEDIA_MAX_H, 16)
+    : null;
+  const quotedBuilt = toItems(quotedMedia, quotedUris).length
+    ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12)
+    : null;
 
   const fontDir = join(import.meta.dir, "..", "assets");
   const [regular, bold, symbols] = await Promise.all([
     Bun.file(join(fontDir, "Sans-Regular.ttf")).arrayBuffer(),
     Bun.file(join(fontDir, "Sans-Bold.ttf")).arrayBuffer(),
-    Bun.file(join(fontDir, "Symbols.ttf")).arrayBuffer(),
+    Bun.file(join(fontDir, "Symbols.woff")).arrayBuffer(),
   ]);
 
   const width = 640;
   let height = 32 + 72 + lineCount(main.text, 46) * 40 + 24 + 28 + 24 + 32;
   if (built) height += built.height;
-  if (quoted) height += 32 + 56 + lineCount(quoted.text, 52) * 28 + 16;
+  if (quoted) height += 32 + 56 + lineCount(quoted.text, 52) * 28 + 16 + (quotedBuilt?.height ?? 0);
 
-  const svg = await satori(cardElement(main, mainAvatar, built?.node ?? null, quoted, quotedAvatar) as never, {
+  const element = cardElement(
+    main,
+    mainAvatar,
+    built?.node ?? null,
+    quoted,
+    quotedAvatar,
+    quotedBuilt?.node ?? null,
+  );
+  const svg = await satori(element as never, {
     width,
     height,
     fonts: [
