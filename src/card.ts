@@ -785,16 +785,35 @@ async function saveIgCard(url: string): Promise<string> {
   return renderPostCard(post, avatarUri, mediaUri, `ig ${post.username} [${shortcode}].png`);
 }
 
+// yt-dlp doesn't expose the creator avatar; it's in the video page's data blob.
+async function tiktokAvatar(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+      },
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/"avatar(?:Larger|Medium|Thumb)":"([^"]+)"/);
+    return m ? m[1].replace(/\\u002F/g, "/").replace(/\\\//g, "/") : null;
+  } catch {
+    return null;
+  }
+}
+
 // yt-dlp gives TikTok's metadata + a thumbnail (its own poster) with no auth.
 async function fetchTikTok(url: string): Promise<IgPost> {
   const proc = Bun.spawn(["yt-dlp", "-j", "--no-warnings", "--no-playlist", url], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [out, errText] = await Promise.all([
+  const [out, errText, , avatar] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
+    tiktokAvatar(url),
   ]);
 
   let d: Record<string, any> | null = null;
@@ -815,7 +834,7 @@ async function fetchTikTok(url: string): Promise<IgPost> {
     caption: normalizeText(d.description ?? d.title ?? ""),
     likes: Number(d.like_count) || 0,
     date: ymd.length === 8 ? `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}` : "",
-    avatar: null, // yt-dlp doesn't expose the creator avatar
+    avatar, // scraped from the page (yt-dlp doesn't expose it)
     media: d.thumbnail
       ? { url: String(d.thumbnail), video: true, width: Number(d.width) || 0, height: Number(d.height) || 0 }
       : null,
