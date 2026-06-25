@@ -396,9 +396,10 @@ export async function saveCard(url: string): Promise<string> {
   const built = mediaItems.length ? buildMedia(mediaItems) : null;
 
   const fontDir = join(import.meta.dir, "..", "assets");
-  const [regular, bold] = await Promise.all([
+  const [regular, bold, symbols] = await Promise.all([
     Bun.file(join(fontDir, "Sans-Regular.ttf")).arrayBuffer(),
     Bun.file(join(fontDir, "Sans-Bold.ttf")).arrayBuffer(),
+    Bun.file(join(fontDir, "Symbols.ttf")).arrayBuffer(),
   ]);
 
   const width = 640;
@@ -412,6 +413,7 @@ export async function saveCard(url: string): Promise<string> {
     fonts: [
       { name: "Sans", data: regular, weight: 400, style: "normal" },
       { name: "Sans", data: bold, weight: 700, style: "normal" },
+      { name: "Symbols", data: symbols, weight: 400, style: "normal" }, // dingbats fallback
     ],
     loadAdditionalAsset: async (code, segment) => (code === "emoji" ? loadEmoji(segment) : ""),
   });
