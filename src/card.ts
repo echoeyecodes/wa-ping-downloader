@@ -80,6 +80,41 @@ function mediaOf(d: Record<string, any>): Media[] {
   }));
 }
 
+type LinkCard = {
+  large: boolean;
+  title: string;
+  domain: string;
+  description: string;
+  image: { url: string; width: number; height: number } | null;
+};
+
+// The link-preview ("unfurl") card some tweets carry, from card.binding_values.
+function linkCardOf(d: Record<string, any>): LinkCard | null {
+  const c = d.card;
+  if (!c?.binding_values) return null;
+  const bv = c.binding_values as Record<string, any>;
+  const str = (k: string): string => bv[k]?.string_value ?? "";
+
+  const title = str("title");
+  const domain = str("vanity_url") || str("domain");
+  if (!title && !domain) return null; // polls/players without an unfurl — skip
+
+  const large = c.name === "summary_large_image" || String(c.name).startsWith("player");
+  const keys = large
+    ? ["photo_image_full_size_large", "summary_photo_image_large", "thumbnail_image_large", "thumbnail_image"]
+    : ["thumbnail_image_large", "thumbnail_image"];
+
+  let image: LinkCard["image"] = null;
+  for (const k of keys) {
+    const v = bv[k]?.image_value;
+    if (v?.url) {
+      image = { url: v.url, width: Number(v.width) || 0, height: Number(v.height) || 0 };
+      break;
+    }
+  }
+  return { large, title, domain, description: str("description"), image };
+}
+
 async function fetchImage(url: string | null): Promise<string | null> {
   if (!url) return null;
   try {
@@ -317,6 +352,76 @@ function buildMedia(
   return { node, height: gridH + 16 };
 }
 
+// Twitter-style link preview: large image on top, or a small left thumbnail.
+function buildLinkCard(info: LinkCard, imageUri: string | null): { node: unknown; height: number } {
+  const domainNode = info.domain ? text(info.domain, { fontSize: 16, color: GRAY }) : null;
+  const titleNode = text(info.title, { fontSize: 20, fontWeight: 700, marginTop: 2, color: "#0f1419" });
+
+  if (info.large) {
+    let imgH = 0;
+    const imgNode = imageUri
+      ? (() => {
+          const nw = info.image?.width || 800;
+          const nh = info.image?.height || 419;
+          imgH = Math.min(360, Math.round((INNER * nh) / nw));
+          return { type: "img", props: { src: imageUri, width: INNER, height: imgH, style: { objectFit: "cover" } } };
+        })()
+      : null;
+    const textBox = {
+      type: "div",
+      props: {
+        style: { display: "flex", flexDirection: "column", padding: 12 },
+        children: [domainNode, titleNode].filter(Boolean),
+      },
+    };
+    const node = {
+      type: "div",
+      props: {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          marginTop: 16,
+          border: "1px solid #cfd9de",
+          borderRadius: 16,
+          overflow: "hidden",
+        },
+        children: imgNode ? [imgNode, textBox] : [textBox],
+      },
+    };
+    const titleLines = Math.max(1, Math.ceil(info.title.length / 38));
+    return { node, height: 16 + imgH + 12 + 22 + titleLines * 26 + 12 };
+  }
+
+  const sq = 130;
+  const imgNode = imageUri
+    ? { type: "img", props: { src: imageUri, width: sq, height: sq, style: { objectFit: "cover" } } }
+    : { type: "div", props: { style: { width: sq, height: sq, backgroundColor: "#cfd9de" } } };
+  const descNode = info.description
+    ? text(info.description, { fontSize: 15, color: GRAY, marginTop: 2 })
+    : null;
+  const right = {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", padding: 12, flexGrow: 1 },
+      children: [domainNode, titleNode, descNode].filter(Boolean),
+    },
+  };
+  const node = {
+    type: "div",
+    props: {
+      style: {
+        display: "flex",
+        marginTop: 16,
+        border: "1px solid #cfd9de",
+        borderRadius: 16,
+        overflow: "hidden",
+      },
+      children: [imgNode, right],
+    },
+  };
+  return { node, height: 16 + sq };
+}
+
 function quotedBox(q: Tweet, avatar: string | null, mediaNode: unknown | null) {
   const children: unknown[] = [authorRow(q.author, avatar, 32, 18)];
   if (q.text) children.push(richText(q.text, 20, 1.3, 8));
@@ -341,6 +446,7 @@ function cardElement(
   main: Tweet,
   mainAvatar: string | null,
   mediaNode: unknown | null,
+  linkCardNode: unknown | null,
   quoted: Tweet | null,
   quotedAvatar: string | null,
   quotedMediaNode: unknown | null,
@@ -348,6 +454,7 @@ function cardElement(
   const children: unknown[] = [authorRow(main.author, mainAvatar, 56, 24)];
   if (main.text) children.push(richText(main.text, 28, 1.35, 20));
   if (mediaNode) children.push(mediaNode);
+  if (linkCardNode) children.push(linkCardNode);
   if (quoted) children.push(quotedBox(quoted, quotedAvatar, quotedMediaNode));
   children.push({
     type: "div",
@@ -396,13 +503,17 @@ export async function saveCard(url: string): Promise<string> {
   const media = mediaOf(data);
   const quoted = data.quoted_tweet ? toTweet(data.quoted_tweet) : null;
   const quotedMedia = data.quoted_tweet ? mediaOf(data.quoted_tweet) : [];
+  // Only show a link card when there's no other media (matches Twitter).
+  const link = media.length === 0 ? linkCardOf(data) : null;
 
-  const [mainAvatar, quotedAvatar, mainUris, quotedUris] = await Promise.all([
+  const [mainAvatar, quotedAvatar, mainUris, quotedUris, linkImg] = await Promise.all([
     fetchImage(main.author.avatar),
     quoted ? fetchImage(quoted.author.avatar) : Promise.resolve(null),
     Promise.all(media.map((m) => fetchImage(m.url))),
     Promise.all(quotedMedia.map((m) => fetchImage(m.url))),
+    link?.image ? fetchImage(link.image.url) : Promise.resolve(null),
   ]);
+  const linkBuilt = link ? buildLinkCard(link, linkImg) : null;
 
   const toItems = (ms: Media[], uris: (string | null)[]): MediaItem[] =>
     ms
@@ -426,12 +537,14 @@ export async function saveCard(url: string): Promise<string> {
   const width = 640;
   let height = 32 + 72 + lineCount(main.text, 46) * 40 + 24 + 28 + 24 + 32;
   if (built) height += built.height;
+  if (linkBuilt) height += linkBuilt.height;
   if (quoted) height += 32 + 56 + lineCount(quoted.text, 52) * 28 + 16 + (quotedBuilt?.height ?? 0);
 
   const element = cardElement(
     main,
     mainAvatar,
     built?.node ?? null,
+    linkBuilt?.node ?? null,
     quoted,
     quotedAvatar,
     quotedBuilt?.node ?? null,
