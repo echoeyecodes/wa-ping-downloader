@@ -13,8 +13,9 @@ import { readFile, writeFile } from "node:fs/promises";
 
 const KEY = "GALLERY_DL_COOKIES_B64";
 const HEADER = "# Netscape HTTP Cookie File";
-// Sites that need login cookies. youtube.com bypasses YouTube's server bot check.
-const DOMAINS = ["instagram.com", "youtube.com"];
+// Sites that need login cookies. youtube.com bypasses YouTube's server bot check;
+// x.com/twitter.com are needed to read tweets (guest access is gone).
+const DOMAINS = ["instagram.com", "youtube.com", "x.com", "twitter.com"];
 
 const args = Bun.argv.slice(2);
 const write = args.some((a) => a === "--write" || a === "-w");

@@ -2,6 +2,7 @@
 /** CLI: download a media resource to disk and print its local file URL. */
 
 import { pathToFileURL } from "node:url";
+import { saveCard } from "./card";
 import { type Command, FORMATS, type Format, download, isFormat } from "./download";
 
 function parseArgs(argv: string[]): Command {
@@ -111,7 +112,26 @@ const ui = (() => {
 })();
 
 async function main(): Promise<void> {
-  const command = parseArgs(Bun.argv.slice(2));
+  const argv = Bun.argv.slice(2);
+
+  // `card` flag: render a tweet's caption + author into a saved PNG.
+  if (argv.includes("card")) {
+    const url = argv.find((a) => /^https?:\/\//i.test(a));
+    if (!url) fail("Provide a tweet URL, e.g. npm run ping \"<tweet>\" card");
+    ui.spin(`Building card for ${url}`);
+    try {
+      const out = await saveCard(url);
+      ui.done();
+      ui.think("Saved card:");
+      console.log(pathToFileURL(out).href);
+    } catch (err) {
+      ui.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+    return;
+  }
+
+  const command = parseArgs(argv);
   ui.spin(`Resolving ${command.url}`);
 
   let paths: string[];

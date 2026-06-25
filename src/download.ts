@@ -155,7 +155,7 @@ function isInstagram(url: string): boolean {
  * base64-encoded file (GALLERY_DL_COOKIES_B64), decoded to a temp file once.
  * cookies.txt is domain-scoped, so one file safely covers both sites.
  */
-async function resolveCookies(): Promise<string | null> {
+export async function resolveCookies(): Promise<string | null> {
   if (cookiesFile !== undefined) return cookiesFile;
 
   const path = process.env.GALLERY_DL_COOKIES?.trim();
