@@ -52,8 +52,7 @@ bun install
 ```bash
 npm run ping "<url>"            # download as mp4
 npm run ping "<url>" mp3        # download as mp3
-npm run ping "<tweet-url>" card # render a tweet as an image card
-npm run ping "<ig-url>" card    # render an Instagram post as a card
+npm run ping "<post-url>" card  # render a tweet / Instagram / TikTok as an image card
 ```
 
 Files are saved to `downloads/`. The local file URL is printed at the end.
@@ -64,6 +63,8 @@ The `card` mode renders a post into a PNG that looks like the real thing:
   syndication API, so no login is needed.
 - **Instagram** — avatar, the photo/video, likes, and caption. Uses gallery-dl,
   so it needs your Instagram cookies (see Cookies below).
+- **TikTok** — creator, the video thumbnail, likes, and caption. Uses yt-dlp, no
+  login needed.
 
 ## WhatsApp bot
 

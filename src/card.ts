@@ -522,9 +522,11 @@ async function renderToFile(
   return out;
 }
 
-/** Render a tweet card or an Instagram card depending on the URL. */
+/** Render a card for a tweet, Instagram post, or TikTok depending on the URL. */
 export async function saveCard(url: string): Promise<string> {
-  return /instagram\.com/i.test(url) ? saveIgCard(url) : saveTweetCard(url);
+  if (/tiktok\.com/i.test(url)) return saveTikTokCard(url);
+  if (/instagram\.com/i.test(url)) return saveIgCard(url);
+  return saveTweetCard(url);
 }
 
 /** Fetch a tweet via the syndication API and save a rendered card PNG. */
@@ -750,13 +752,13 @@ function igCardElement(post: IgPost, avatarUri: string | null, mediaNode: unknow
   };
 }
 
-async function saveIgCard(url: string): Promise<string> {
-  const post = await fetchIgPost(url);
-  const [avatarUri, mediaUri] = await Promise.all([
-    fetchImage(post.avatar),
-    post.media ? (post.media.video ? videoPoster(post.media.url) : fetchImage(post.media.url)) : Promise.resolve(null),
-  ]);
-
+// Shared renderer for the post-style card (Instagram, TikTok).
+async function renderPostCard(
+  post: IgPost,
+  avatarUri: string | null,
+  mediaUri: string | null,
+  outName: string,
+): Promise<string> {
   const width = 640;
   let mediaH = 0;
   let mediaNode: unknown | null = null;
@@ -770,6 +772,63 @@ async function saveIgCard(url: string): Promise<string> {
   const captionLines = post.caption ? lineCount(`${post.username} ${post.caption}`, 40) : 0;
   const height = 72 + mediaH + 12 + 24 + captionLines * 26 + 26 + 12;
 
+  return renderToFile(igCardElement(post, avatarUri, mediaNode), width, height, outName);
+}
+
+async function saveIgCard(url: string): Promise<string> {
+  const post = await fetchIgPost(url);
+  const [avatarUri, mediaUri] = await Promise.all([
+    fetchImage(post.avatar),
+    post.media ? (post.media.video ? videoPoster(post.media.url) : fetchImage(post.media.url)) : Promise.resolve(null),
+  ]);
   const shortcode = url.match(/\/(?:p|reel|tv)\/([^/?]+)/i)?.[1] ?? "ig";
-  return renderToFile(igCardElement(post, avatarUri, mediaNode), width, height, `ig ${post.username} [${shortcode}].png`);
+  return renderPostCard(post, avatarUri, mediaUri, `ig ${post.username} [${shortcode}].png`);
+}
+
+// yt-dlp gives TikTok's metadata + a thumbnail (its own poster) with no auth.
+async function fetchTikTok(url: string): Promise<IgPost> {
+  const proc = Bun.spawn(["yt-dlp", "-j", "--no-warnings", "--no-playlist", url], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, errText] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  let d: Record<string, any> | null = null;
+  try {
+    d = JSON.parse(out);
+  } catch {
+    // handled below
+  }
+  if (!d || typeof d !== "object") {
+    const last = errText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1);
+    throw new Error(last ? last.replace(/^ERROR:\s*/, "") : "Couldn't load that TikTok.");
+  }
+
+  const ymd = String(d.upload_date ?? "");
+  return {
+    username: String(d.uploader ?? ""),
+    fullname: normalizeText(d.channel ?? d.creator ?? ""),
+    caption: normalizeText(d.description ?? d.title ?? ""),
+    likes: Number(d.like_count) || 0,
+    date: ymd.length === 8 ? `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}` : "",
+    avatar: null, // yt-dlp doesn't expose the creator avatar
+    media: d.thumbnail
+      ? { url: String(d.thumbnail), video: true, width: Number(d.width) || 0, height: Number(d.height) || 0 }
+      : null,
+  };
+}
+
+async function saveTikTokCard(url: string): Promise<string> {
+  const post = await fetchTikTok(url);
+  // The TikTok thumbnail is already an image (yt-dlp's poster), so fetch it directly.
+  const [avatarUri, mediaUri] = await Promise.all([
+    fetchImage(post.avatar),
+    post.media ? fetchImage(post.media.url) : Promise.resolve(null),
+  ]);
+  const id = url.match(/video\/(\d+)/i)?.[1] ?? "tiktok";
+  return renderPostCard(post, avatarUri, mediaUri, `tiktok ${post.username} [${id}].png`);
 }
