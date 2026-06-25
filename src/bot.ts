@@ -15,7 +15,8 @@ import { type Command, download, parseCommand, videoMeta } from "./download";
 import { linkState, startLinkServer } from "./link";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 
-const isTweetUrl = (url: string): boolean => /(?:x|twitter)\.com\/[^/]+\/status\//i.test(url);
+const isCardUrl = (url: string): boolean =>
+  /(?:x|twitter)\.com\/[^/]+\/status\//i.test(url) || /instagram\.com\/(?:p|reel|tv)\//i.test(url);
 
 const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
 const ALBUM_VIDEO = ["mp4", "mov", "mkv", "webm", "m4v", "gif"];
@@ -207,8 +208,8 @@ await runSocket({
       const body = extractText(msg);
       const command = parseCommand(body);
       if (!command) continue;
-      // "card" + a tweet link → render a tweet card image instead of downloading.
-      if (/\bcard\b/i.test(body) && isTweetUrl(command.url)) {
+      // "card" + a tweet/Instagram link → render a card image instead of downloading.
+      if (/\bcard\b/i.test(body) && isCardUrl(command.url)) {
         await handleCard(sock, jid, msg, command.url);
         continue;
       }

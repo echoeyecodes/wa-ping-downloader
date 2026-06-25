@@ -53,13 +53,17 @@ bun install
 npm run ping "<url>"            # download as mp4
 npm run ping "<url>" mp3        # download as mp3
 npm run ping "<tweet-url>" card # render a tweet as an image card
+npm run ping "<ig-url>" card    # render an Instagram post as a card
 ```
 
 Files are saved to `downloads/`. The local file URL is printed at the end.
 
-The `card` mode renders a tweet (text, media, quotes, link previews) into a PNG
-that looks like an embedded tweet. It uses X's public syndication API, so no
-login is needed.
+The `card` mode renders a post into a PNG that looks like the real thing:
+
+- **Tweets** — text, media, quotes, and link previews. Uses X's public
+  syndication API, so no login is needed.
+- **Instagram** — avatar, the photo/video, likes, and caption. Uses gallery-dl,
+  so it needs your Instagram cookies (see Cookies below).
 
 ## WhatsApp bot
 
@@ -77,7 +81,7 @@ login is needed.
 
 3. Send a link in a chat. The bot downloads it and sends the file back.
    Add `mp3` in the message to get audio.
-   Send a tweet link with the word `card` to get a rendered tweet image back.
+   Send a tweet or Instagram link with the word `card` to get a rendered image back.
 
 The session is saved in `.wa-auth/`, so you only pair once.
 

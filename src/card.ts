@@ -1,11 +1,11 @@
-/** Render a tweet (text, media, quotes) into a saved PNG card, Twitter-style.
- *  Uses X's public syndication API (same source as embedded tweets) — no auth. */
+/** Render a tweet (Twitter syndication) or Instagram post (gallery-dl) into a PNG card. */
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Resvg } from "@resvg/resvg-js";
 import satori from "satori";
-import { downloadsDir } from "./download";
+import { downloadsDir, resolveCookies } from "./download";
 
 type Author = { name: string; handle: string; avatar: string | null };
 type Media = { url: string; video: boolean; width: number; height: number };
@@ -489,8 +489,46 @@ function cardElement(
 const lineCount = (s: string, perLine: number): number =>
   s.split("\n").reduce((acc, line) => acc + Math.max(1, Math.ceil(line.length / perLine)), 0);
 
-/** Fetch a tweet via the syndication API and save a rendered card PNG. */
+/** Render a satori element tree to a PNG file in downloads/ and return its path. */
+async function renderToFile(
+  element: unknown,
+  width: number,
+  height: number,
+  outName: string,
+): Promise<string> {
+  const fontDir = join(import.meta.dir, "..", "assets");
+  const [regular, bold, symbols] = await Promise.all([
+    Bun.file(join(fontDir, "Sans-Regular.ttf")).arrayBuffer(),
+    Bun.file(join(fontDir, "Sans-Bold.ttf")).arrayBuffer(),
+    Bun.file(join(fontDir, "Symbols.woff")).arrayBuffer(),
+  ]);
+
+  const svg = await satori(element as never, {
+    width,
+    height,
+    fonts: [
+      { name: "Sans", data: regular, weight: 400, style: "normal" },
+      { name: "Sans", data: bold, weight: 700, style: "normal" },
+      { name: "Symbols", data: symbols, weight: 400, style: "normal" }, // dingbats fallback
+    ],
+    loadAdditionalAsset: async (code, segment) => (code === "emoji" ? loadEmoji(segment) : ""),
+  });
+
+  const png = new Resvg(svg, { fitTo: { mode: "width", value: width * 2 } }).render().asPng();
+  const outDir = downloadsDir();
+  await mkdir(outDir, { recursive: true });
+  const out = join(outDir, outName);
+  await Bun.write(out, png);
+  return out;
+}
+
+/** Render a tweet card or an Instagram card depending on the URL. */
 export async function saveCard(url: string): Promise<string> {
+  return /instagram\.com/i.test(url) ? saveIgCard(url) : saveTweetCard(url);
+}
+
+/** Fetch a tweet via the syndication API and save a rendered card PNG. */
+async function saveTweetCard(url: string): Promise<string> {
   const id = tweetId(url);
   if (!id) throw new Error("That doesn't look like a tweet URL.");
 
@@ -527,13 +565,6 @@ export async function saveCard(url: string): Promise<string> {
     ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12)
     : null;
 
-  const fontDir = join(import.meta.dir, "..", "assets");
-  const [regular, bold, symbols] = await Promise.all([
-    Bun.file(join(fontDir, "Sans-Regular.ttf")).arrayBuffer(),
-    Bun.file(join(fontDir, "Sans-Bold.ttf")).arrayBuffer(),
-    Bun.file(join(fontDir, "Symbols.woff")).arrayBuffer(),
-  ]);
-
   const width = 640;
   let height = 32 + 72 + lineCount(main.text, 46) * 40 + 24 + 28 + 24 + 32;
   if (built) height += built.height;
@@ -549,22 +580,196 @@ export async function saveCard(url: string): Promise<string> {
     quotedAvatar,
     quotedBuilt?.node ?? null,
   );
-  const svg = await satori(element as never, {
-    width,
-    height,
-    fonts: [
-      { name: "Sans", data: regular, weight: 400, style: "normal" },
-      { name: "Sans", data: bold, weight: 700, style: "normal" },
-      { name: "Symbols", data: symbols, weight: 400, style: "normal" }, // dingbats fallback
-    ],
-    loadAdditionalAsset: async (code, segment) => (code === "emoji" ? loadEmoji(segment) : ""),
+  return renderToFile(element, width, height, `tweet ${main.author.handle || id} [${id}].png`);
+}
+
+// --- Instagram (gallery-dl, needs IG cookies) ---
+
+type IgPost = {
+  username: string;
+  fullname: string;
+  caption: string;
+  likes: number;
+  date: string;
+  avatar: string | null;
+  media: { url: string; video: boolean; width: number; height: number } | null;
+};
+
+function findDeep(node: unknown, pred: (o: Record<string, any>) => boolean): Record<string, any> | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const r = findDeep(child, pred);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (node && typeof node === "object") {
+    const o = node as Record<string, any>;
+    if (pred(o)) return o;
+    for (const v of Object.values(o)) {
+      const r = findDeep(v, pred);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+// One frame from a video, as a poster image (IG reels carry no thumbnail).
+async function videoPoster(url: string): Promise<string | null> {
+  const tmp = join(tmpdir(), `ping-poster-${Math.floor(Math.random() * 1e9)}.jpg`);
+  const proc = Bun.spawn(
+    ["ffmpeg", "-y", "-loglevel", "error", "-ss", "0", "-i", url, "-frames:v", "1", "-vf", "scale=720:-1", tmp],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  if ((await proc.exited) !== 0) return null;
+  try {
+    const buf = await Bun.file(tmp).arrayBuffer();
+    await rm(tmp).catch(() => {});
+    return `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchIgPost(url: string): Promise<IgPost> {
+  const cookies = await resolveCookies();
+  const proc = Bun.spawn(
+    ["gallery-dl", "-j", ...(cookies ? ["--cookies", cookies] : []), url],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [out, errText] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  let data: unknown = null;
+  try {
+    data = JSON.parse(out);
+  } catch {
+    // handled below
+  }
+
+  const post = Array.isArray(data)
+    ? findDeep(data, (o) => typeof o.description === "string" && typeof o.username === "string")
+    : null;
+  if (!post) {
+    const last = errText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1);
+    if (last) throw new Error(last.replace(/^\[[^\]]+\]\s*/g, ""));
+    throw new Error("Couldn't load that Instagram post. It may be private or need login cookies.");
+  }
+
+  const avatar = findDeep(data, (o) => typeof o.profile_pic_url === "string")?.profile_pic_url ?? null;
+
+  let media: IgPost["media"] = null;
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (!Array.isArray(item) || item[0] !== 3) continue;
+      const m = (item[2] ?? {}) as Record<string, any>;
+      const video = Boolean(m.video_url) || m.type === "video" || m.type === "reel";
+      media = {
+        url: video ? String(m.video_url) : String(item[1]),
+        video,
+        width: Number(m.width) || 0,
+        height: Number(m.height) || 0,
+      };
+      break; // first item only (carousels)
+    }
+  }
+
+  return {
+    username: String(post.username),
+    fullname: normalizeText(post.fullname ?? ""),
+    caption: normalizeText(post.description ?? ""),
+    likes: Number(post.likes) || 0,
+    date: String(post.date ?? "").slice(0, 10),
+    avatar,
+    media,
+  };
+}
+
+// Caption: bold username then the text, with @mentions/#hashtags accented.
+function captionText(username: string, caption: string) {
+  const children: unknown[] = [
+    { type: "div", props: { style: { display: "flex", whiteSpace: "pre", fontSize: 18, fontWeight: 700 }, children: `${username} ` } },
+  ];
+  caption.split("\n").forEach((line, li) => {
+    if (li > 0) children.push({ type: "div", props: { style: { display: "flex", width: "100%", height: 0 } } });
+    for (const tok of line.match(/\S+\s*/g) ?? []) {
+      children.push({
+        type: "div",
+        props: {
+          style: { display: "flex", whiteSpace: "pre", fontSize: 18, lineHeight: 1.35, color: isEntity(tok.trimEnd()) ? ACCENT : undefined },
+          children: tok,
+        },
+      });
+    }
   });
+  return { type: "div", props: { style: { display: "flex", flexWrap: "wrap", marginTop: 6 }, children } };
+}
 
-  const png = new Resvg(svg, { fitTo: { mode: "width", value: width * 2 } }).render().asPng();
+function igCardElement(post: IgPost, avatarUri: string | null, mediaNode: unknown | null): unknown {
+  const header = {
+    type: "div",
+    props: {
+      style: { display: "flex", alignItems: "center", padding: "14px 16px" },
+      children: [
+        avatarNode(avatarUri, 44),
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", flexDirection: "column", marginLeft: 10 },
+            children: [
+              text(post.username, { fontSize: 20, fontWeight: 700 }),
+              post.fullname ? text(post.fullname, { fontSize: 15, color: GRAY }) : null,
+            ].filter(Boolean),
+          },
+        },
+      ],
+    },
+  };
 
-  const outDir = downloadsDir();
-  await mkdir(outDir, { recursive: true });
-  const out = join(outDir, `tweet ${main.author.handle || id} [${id}].png`);
-  await Bun.write(out, png);
-  return out;
+  const footer = {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", padding: "12px 16px" },
+      children: [
+        text(`${compact(post.likes)} likes`, { fontSize: 18, fontWeight: 700 }),
+        post.caption ? captionText(post.username, post.caption) : null,
+        text(post.date, { fontSize: 14, color: GRAY, marginTop: 8 }),
+      ].filter(Boolean),
+    },
+  };
+
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", fontFamily: "Sans", color: "#0f1419", width: "100%" },
+      children: [header, mediaNode, footer].filter(Boolean),
+    },
+  };
+}
+
+async function saveIgCard(url: string): Promise<string> {
+  const post = await fetchIgPost(url);
+  const [avatarUri, mediaUri] = await Promise.all([
+    fetchImage(post.avatar),
+    post.media ? (post.media.video ? videoPoster(post.media.url) : fetchImage(post.media.url)) : Promise.resolve(null),
+  ]);
+
+  const width = 640;
+  let mediaH = 0;
+  let mediaNode: unknown | null = null;
+  if (post.media && mediaUri) {
+    const nw = post.media.width || 1;
+    const nh = post.media.height || 1;
+    mediaH = Math.min(800, Math.round((width * nh) / nw));
+    mediaNode = imageTile(mediaUri, width, mediaH, post.media.video, 0);
+  }
+
+  const captionLines = post.caption ? lineCount(`${post.username} ${post.caption}`, 40) : 0;
+  const height = 72 + mediaH + 12 + 24 + captionLines * 26 + 26 + 12;
+
+  const shortcode = url.match(/\/(?:p|reel|tv)\/([^/?]+)/i)?.[1] ?? "ig";
+  return renderToFile(igCardElement(post, avatarUri, mediaNode), width, height, `ig ${post.username} [${shortcode}].png`);
 }
