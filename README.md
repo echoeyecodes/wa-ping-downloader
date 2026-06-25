@@ -50,11 +50,16 @@ bun install
 ## Command line
 
 ```bash
-npm run ping "<url>"        # download as mp4
-npm run ping "<url>" mp3    # download as mp3
+npm run ping "<url>"            # download as mp4
+npm run ping "<url>" mp3        # download as mp3
+npm run ping "<tweet-url>" card # render a tweet as an image card
 ```
 
 Files are saved to `downloads/`. The local file URL is printed at the end.
+
+The `card` mode renders a tweet (text, media, quotes, link previews) into a PNG
+that looks like an embedded tweet. It uses X's public syndication API, so no
+login is needed.
 
 ## WhatsApp bot
 
@@ -72,6 +77,7 @@ Files are saved to `downloads/`. The local file URL is printed at the end.
 
 3. Send a link in a chat. The bot downloads it and sends the file back.
    Add `mp3` in the message to get audio.
+   Send a tweet link with the word `card` to get a rendered tweet image back.
 
 The session is saved in `.wa-auth/`, so you only pair once.
 

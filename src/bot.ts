@@ -9,10 +9,13 @@ import type {
   WASocket,
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
+import { saveCard } from "./card";
 import { config } from "./config";
 import { type Command, download, parseCommand, videoMeta } from "./download";
 import { linkState, startLinkServer } from "./link";
 import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
+
+const isTweetUrl = (url: string): boolean => /(?:x|twitter)\.com\/[^/]+\/status\//i.test(url);
 
 const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
 const ALBUM_VIDEO = ["mp4", "mov", "mkv", "webm", "m4v", "gif"];
@@ -110,6 +113,22 @@ function startTyping(sock: WASocket, jid: string): () => void {
   };
 }
 
+async function handleCard(sock: WASocket, jid: string, msg: WAMessage, url: string): Promise<void> {
+  const stopTyping = startTyping(sock, jid);
+  try {
+    const path = await saveCard(url);
+    stopTyping();
+    await sock.sendMessage(jid, { image: { url: path } }, { quoted: msg });
+  } catch (err) {
+    stopTyping();
+    await sock.sendMessage(
+      jid,
+      { text: `Failed: ${err instanceof Error ? err.message : String(err)}` },
+      { quoted: msg },
+    );
+  }
+}
+
 async function handleCommand(
   sock: WASocket,
   jid: string,
@@ -185,8 +204,14 @@ await runSocket({
       if (Number(msg.messageTimestamp) < startedAt - 5) continue;
       if (!shouldHandle(jid, msg, sock)) continue;
 
-      const command = parseCommand(extractText(msg));
+      const body = extractText(msg);
+      const command = parseCommand(body);
       if (!command) continue;
+      // "card" + a tweet link → render a tweet card image instead of downloading.
+      if (/\bcard\b/i.test(body) && isTweetUrl(command.url)) {
+        await handleCard(sock, jid, msg, command.url);
+        continue;
+      }
       await handleCommand(sock, jid, msg, command);
     }
   },
