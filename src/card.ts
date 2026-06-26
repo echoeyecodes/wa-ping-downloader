@@ -174,6 +174,17 @@ const compact = (n: number): string => {
 const GRAY = "#536471";
 const ACCENT = "#1d9bf0";
 const SENTINEL = "#fe00ff";
+
+// Instagram palette
+const IG_TEXT = "#262626";
+const IG_SUBTLE = "#8e8e8e";
+const IG_LINK = "#00376b";
+const IG_RING = "linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5)";
+
+// TikTok palette
+const TT_TEXT = "#ffffff";
+const TT_MUTED = "rgba(255,255,255,0.55)";
+const TT_PINK = "#fe2c55";
 const INNER = 576;
 const QUOTE_INNER = 544;
 const PARENT_INNER = 516;
@@ -187,6 +198,38 @@ const PLAY_URI = `data:image/svg+xml;base64,${Buffer.from(
     '<circle cx="32" cy="32" r="32" fill="#000" fill-opacity="0.55"/>' +
     '<path d="M25 19 L47 32 L25 45 Z" fill="#fff"/></svg>',
 ).toString("base64")}`;
+
+// Feather-style line icons used by the Instagram/TikTok chrome.
+const ICON = {
+  heart:
+    '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l9.84-9.84a5.5 5.5 0 0 0 0-7.78z"/>',
+  comment:
+    '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
+  send: '<path d="M22 2 11 13M22 2 15 22 11 13 2 9z"/>',
+  bookmark: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+};
+
+function featherIcon(inner: string, color: string, fill = "none"): string {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" ' +
+    `fill="${fill}" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+const iconImg = (inner: string, color: string, size: number, fill = "none") => ({
+  type: "img",
+  props: { src: featherIcon(inner, color, fill), width: size, height: size },
+});
+
+const MONTHS = "January February March April May June July August September October November December".split(" ");
+
+/** "2024-01-02" -> "January 2, 2024" (falls back to the raw string). */
+function prettyDate(iso: string): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
+}
 
 const text = (value: string, style: Record<string, unknown>) => ({
   type: "div",
@@ -741,6 +784,9 @@ type IgPost = {
   fullname: string;
   caption: string;
   likes: number;
+  comments: number;
+  shares: number;
+  music: string;
   date: string;
   avatar: string | null;
   media: { url: string; video: boolean; width: number; height: number } | null;
@@ -831,48 +877,102 @@ async function fetchIgPost(url: string): Promise<IgPost> {
     fullname: normalizeText(post.fullname ?? ""),
     caption: normalizeText(post.description ?? ""),
     likes: Number(post.likes) || 0,
+    comments: Number(post.comments) || 0,
+    shares: 0,
+    music: "",
     date: String(post.date ?? "").slice(0, 10),
     avatar,
     media,
   };
 }
 
-function captionText(username: string, caption: string) {
-  const children: unknown[] = [
-    { type: "div", props: { style: { display: "flex", whiteSpace: "pre", fontSize: 18, fontWeight: 700 }, children: `${username} ` } },
-  ];
+type CaptionOpts = { accent: string; color?: string; size: number };
+
+/** Caption text with an optional leading bold username and accent-colored entities. */
+function captionText(username: string, caption: string, opts: CaptionOpts) {
+  const { accent, color, size } = opts;
+  const children: unknown[] = [];
+  if (username) {
+    children.push({
+      type: "div",
+      props: { style: { display: "flex", whiteSpace: "pre", fontSize: size, fontWeight: 700, color }, children: `${username} ` },
+    });
+  }
   caption.split("\n").forEach((line, li) => {
     if (li > 0) children.push({ type: "div", props: { style: { display: "flex", width: "100%", height: 0 } } });
     for (const tok of line.match(/\S+\s*/g) ?? []) {
       children.push({
         type: "div",
         props: {
-          style: { display: "flex", whiteSpace: "pre", fontSize: 18, lineHeight: 1.35, color: isEntity(tok.trimEnd()) ? ACCENT : undefined },
+          style: { display: "flex", whiteSpace: "pre", fontSize: size, lineHeight: 1.35, color: isEntity(tok.trimEnd()) ? accent : color },
           children: tok,
         },
       });
     }
   });
-  return { type: "div", props: { style: { display: "flex", flexWrap: "wrap", marginTop: 6 }, children } };
+  return { type: "div", props: { style: { display: "flex", flexWrap: "wrap", marginTop: 4 }, children } };
+}
+
+/** Avatar wrapped in Instagram's gradient story ring. */
+function igAvatarRing(src: string | null, size: number) {
+  const ring = size + 8;
+  const gap = size + 3;
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", alignItems: "center", justifyContent: "center", width: ring, height: ring, borderRadius: ring / 2, backgroundImage: IG_RING },
+      children: [
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", alignItems: "center", justifyContent: "center", width: gap, height: gap, borderRadius: gap / 2, backgroundColor: "#fff" },
+            children: [avatarNode(src, size)],
+          },
+        },
+      ],
+    },
+  };
 }
 
 function igCardElement(post: IgPost, avatarUri: string | null, mediaNode: unknown | null): unknown {
   const header = {
     type: "div",
     props: {
-      style: { display: "flex", alignItems: "center", padding: "14px 16px" },
+      style: { display: "flex", alignItems: "center", padding: "11px 14px" },
       children: [
-        avatarNode(avatarUri, 44),
+        igAvatarRing(avatarUri, 40),
         {
           type: "div",
           props: {
-            style: { display: "flex", flexDirection: "column", marginLeft: 10 },
+            style: { display: "flex", flexDirection: "column", marginLeft: 11, flexGrow: 1 },
             children: [
-              text(post.username, { fontSize: 20, fontWeight: 700 }),
-              post.fullname ? text(post.fullname, { fontSize: 15, color: GRAY }) : null,
+              text(post.username, { fontSize: 16, fontWeight: 700, color: IG_TEXT }),
+              post.fullname ? text(post.fullname, { fontSize: 13, color: IG_SUBTLE }) : null,
             ].filter(Boolean),
           },
         },
+        text("•••", { fontSize: 20, fontWeight: 700, color: IG_TEXT }),
+      ],
+    },
+  };
+
+  const actions = {
+    type: "div",
+    props: {
+      style: { display: "flex", alignItems: "center", padding: "11px 14px 7px" },
+      children: [
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", alignItems: "center", flexGrow: 1 },
+            children: [
+              { type: "div", props: { style: { display: "flex", marginRight: 16 }, children: [iconImg(ICON.heart, IG_TEXT, 27)] } },
+              { type: "div", props: { style: { display: "flex", marginRight: 16 }, children: [iconImg(ICON.comment, IG_TEXT, 27)] } },
+              iconImg(ICON.send, IG_TEXT, 27),
+            ],
+          },
+        },
+        iconImg(ICON.bookmark, IG_TEXT, 27),
       ],
     },
   };
@@ -880,11 +980,11 @@ function igCardElement(post: IgPost, avatarUri: string | null, mediaNode: unknow
   const footer = {
     type: "div",
     props: {
-      style: { display: "flex", flexDirection: "column", padding: "12px 16px" },
+      style: { display: "flex", flexDirection: "column", padding: "0 14px 14px" },
       children: [
-        text(`${compact(post.likes)} likes`, { fontSize: 18, fontWeight: 700 }),
-        post.caption ? captionText(post.username, post.caption) : null,
-        text(post.date, { fontSize: 14, color: GRAY, marginTop: 8 }),
+        text(`${compact(post.likes)} likes`, { fontSize: 15, fontWeight: 700, color: IG_TEXT }),
+        post.caption ? captionText(post.username, post.caption, { accent: IG_LINK, color: IG_TEXT, size: 15 }) : null,
+        post.date ? text(prettyDate(post.date).toUpperCase(), { fontSize: 11, color: IG_SUBTLE, marginTop: 8 }) : null,
       ].filter(Boolean),
     },
   };
@@ -892,8 +992,139 @@ function igCardElement(post: IgPost, avatarUri: string | null, mediaNode: unknow
   return {
     type: "div",
     props: {
-      style: { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", fontFamily: "Sans", color: "#0f1419", width: "100%" },
-      children: [header, mediaNode, footer].filter(Boolean),
+      style: { display: "flex", flexDirection: "column", backgroundColor: "#ffffff", fontFamily: "Sans", color: IG_TEXT, width: "100%" },
+      children: [header, mediaNode, actions, footer].filter(Boolean),
+    },
+  };
+}
+
+/** One vertical action on the TikTok rail: an icon with a count beneath it. */
+function ttRailItem(inner: string, label: string, fill = false) {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "column", alignItems: "center", marginTop: 18 },
+      children: [
+        iconImg(inner, fill ? TT_PINK : TT_TEXT, 34, fill ? TT_PINK : "none"),
+        label ? text(label, { fontSize: 12, fontWeight: 600, color: TT_TEXT, marginTop: 5 }) : null,
+      ].filter(Boolean),
+    },
+  };
+}
+
+/** TikTok avatar: round, white-bordered, with the pink follow badge. */
+function ttAvatar(src: string | null, size: number) {
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", position: "relative", width: size + 4, height: size + 4 },
+      children: [
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", width: size + 4, height: size + 4, borderRadius: (size + 4) / 2, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
+            children: [avatarNode(src, size)],
+          },
+        },
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", position: "absolute", bottom: -9, left: (size + 4) / 2 - 9, width: 18, height: 18, borderRadius: 9, backgroundColor: TT_PINK, alignItems: "center", justifyContent: "center" },
+            children: [text("+", { fontSize: 13, fontWeight: 700, color: "#fff", marginTop: -1 })],
+          },
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * Full-bleed TikTok frame: the media fills the card and the chrome (rail, caption,
+ * music) is overlaid on top. `posterNode` is the still image for static cards; pass
+ * null to get a transparent overlay that gets composited over the playing video.
+ */
+function tiktokCardElement(
+  post: IgPost,
+  avatarUri: string | null,
+  posterNode: unknown | null,
+  width: number,
+  height: number,
+): unknown {
+  const scrim = {
+    type: "div",
+    props: {
+      style: {
+        position: "absolute",
+        left: 0,
+        bottom: 0,
+        width,
+        height: Math.round(height * 0.55),
+        backgroundImage: "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.5) 65%, rgba(0,0,0,0.82) 100%)",
+      },
+    },
+  };
+
+  const play = posterNode && post.media?.video
+    ? {
+        type: "div",
+        props: {
+          style: { position: "absolute", top: (height - 72) / 2, left: (width - 72) / 2, display: "flex" },
+          children: [{ type: "img", props: { src: PLAY_URI, width: 72, height: 72 } }],
+        },
+      }
+    : null;
+
+  const rail = {
+    type: "div",
+    props: {
+      style: { position: "absolute", right: 8, bottom: 18, display: "flex", flexDirection: "column", alignItems: "center" },
+      children: [
+        ttAvatar(avatarUri, 48),
+        ttRailItem(ICON.heart, compact(post.likes), true),
+        ttRailItem(ICON.comment, compact(post.comments)),
+        ttRailItem(ICON.bookmark, ""),
+        ttRailItem(ICON.send, post.shares ? compact(post.shares) : ""),
+      ],
+    },
+  };
+
+  const caption = post.caption.length > 140 ? `${post.caption.slice(0, 140).trimEnd()}…` : post.caption;
+  const music = post.music || `original sound - ${post.fullname || post.username}`;
+  const info = {
+    type: "div",
+    props: {
+      style: { position: "absolute", left: 16, bottom: 18, display: "flex", flexDirection: "column", width: width - 104 },
+      children: [
+        text(`@${post.username}`, { fontSize: 17, fontWeight: 700, color: TT_TEXT, marginBottom: 6 }),
+        caption ? captionText("", caption, { accent: TT_TEXT, color: TT_TEXT, size: 15 }) : null,
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", alignItems: "center", marginTop: 8 },
+            children: [
+              { type: "div", props: { style: { display: "flex", marginRight: 7 }, children: [iconImg(ICON.music, TT_TEXT, 15)] } },
+              text(music, { fontSize: 13, color: TT_TEXT }),
+            ],
+          },
+        },
+      ].filter(Boolean),
+    },
+  };
+
+  return {
+    type: "div",
+    props: {
+      style: {
+        position: "relative",
+        display: "flex",
+        width: "100%",
+        height,
+        overflow: "hidden",
+        fontFamily: "Sans",
+        color: TT_TEXT,
+        ...(posterNode ? { backgroundColor: "#000000" } : {}),
+      },
+      children: [posterNode, scrim, play, rail, info].filter(Boolean),
     },
   };
 }
@@ -938,7 +1169,8 @@ async function compositeCardVideo(
   return (await proc.exited) === 0 ? out : cardPng;
 }
 
-async function renderPostCard(
+/** Instagram card: gradient-ring header, edge-to-edge media, action row, likes, caption. */
+async function renderIgCard(
   post: IgPost,
   avatarUri: string | null,
   mediaUri: string | null,
@@ -946,7 +1178,8 @@ async function renderPostCard(
   opts: CardOpts = {},
 ): Promise<string> {
   const width = 640;
-  const headerH = 72;
+  const headerH = 62;
+  const actionsH = 45;
   const wantVideo = Boolean(opts.video && opts.url && post.media?.video);
   let mediaH = 0;
   let mediaNode: unknown | null = null;
@@ -959,11 +1192,83 @@ async function renderPostCard(
       : imageTile(mediaUri as string, width, mediaH, post.media.video, 0);
   }
 
-  const captionLines = post.caption ? lineCount(`${post.username} ${post.caption}`, 40) : 0;
-  const height = headerH + mediaH + 12 + 24 + captionLines * 26 + 26 + 12;
+  const captionLines = post.caption ? lineCount(`${post.username} ${post.caption}`, 44) : 0;
+  const likesH = 22;
+  const captionH = captionLines * 21 + (post.caption ? 4 : 0);
+  const dateH = post.date ? 27 : 0;
+  const height = headerH + mediaH + actionsH + likesH + captionH + dateH + 14;
 
   const element = igCardElement(post, avatarUri, mediaNode);
   if (wantVideo) return renderToVideo(element, width, height, outBase, opts.url as string);
+  return renderToFile(element, width, height, `${outBase}.png`);
+}
+
+/** Overlay the playing video full-bleed, then composite the transparent chrome on top. */
+async function compositeTikTokVideo(
+  chromePng: string,
+  url: string,
+  w: number,
+  h: number,
+  outName: string,
+): Promise<string | null> {
+  let video: string | undefined;
+  try {
+    video = (await download({ url, format: "mp4" }, undefined, { normalize: false }))[0];
+  } catch {
+    video = undefined;
+  }
+  if (!video) return null;
+
+  const out = join(downloadsDir(), outName);
+  const filter =
+    `[1:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1[bg];` +
+    `[bg][0:v]overlay=0:0:shortest=1[v]`;
+  const proc = Bun.spawn(
+    [
+      "ffmpeg", "-y", "-loglevel", "error",
+      "-loop", "1", "-i", chromePng,
+      "-i", video,
+      "-filter_complex", filter,
+      "-map", "[v]", "-map", "1:a?",
+      "-r", "30",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "28",
+      "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-shortest",
+      out,
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  return (await proc.exited) === 0 ? out : null;
+}
+
+/** TikTok card: full-bleed media with the action rail, caption, and music overlaid on it. */
+async function renderTikTokCard(
+  post: IgPost,
+  avatarUri: string | null,
+  mediaUri: string | null,
+  outBase: string,
+  opts: CardOpts = {},
+): Promise<string> {
+  const width = 640;
+  const nw = post.media?.width || 9;
+  const nh = post.media?.height || 16;
+  let height = Math.min(1138, Math.max(560, Math.round((width * nh) / nw)));
+  height += height % 2; // even height for h264
+  const wantVideo = Boolean(opts.video && opts.url && post.media?.video);
+
+  if (wantVideo) {
+    // Transparent chrome (no poster) composited over the full-bleed video.
+    const chrome = tiktokCardElement(post, avatarUri, null, width, height);
+    const svg = await renderSvg(chrome, width, height);
+    const png = await rasterize(svg, width, VIDEO_SCALE, `${outBase}.png`);
+    const mp4 = await compositeTikTokVideo(png, opts.url as string, width * VIDEO_SCALE, height * VIDEO_SCALE, `${outBase}.mp4`);
+    if (mp4) return mp4;
+    // Fall through to a static card if the video couldn't be fetched.
+  }
+
+  const poster = mediaUri
+    ? { type: "img", props: { src: mediaUri, width, height, style: { position: "absolute", top: 0, left: 0, objectFit: "cover" } } }
+    : null;
+  const element = tiktokCardElement(post, avatarUri, poster, width, height);
   return renderToFile(element, width, height, `${outBase}.png`);
 }
 
@@ -974,7 +1279,7 @@ async function saveIgCard(url: string, opts: CardOpts = {}): Promise<string> {
     post.media ? (post.media.video ? videoPoster(post.media.url) : fetchImage(post.media.url)) : Promise.resolve(null),
   ]);
   const shortcode = url.match(/\/(?:p|reel|tv)\/([^/?]+)/i)?.[1] ?? "ig";
-  return renderPostCard(post, avatarUri, mediaUri, `ig ${post.username} [${shortcode}]`, { ...opts, url });
+  return renderIgCard(post, avatarUri, mediaUri, `ig ${post.username} [${shortcode}]`, { ...opts, url });
 }
 
 async function tiktokAvatar(url: string): Promise<string | null> {
@@ -1017,11 +1322,16 @@ async function fetchTikTok(url: string): Promise<IgPost> {
   }
 
   const ymd = String(d.upload_date ?? "");
+  const track = normalizeText(d.track ?? "");
+  const artist = normalizeText(d.artist ?? "");
   return {
     username: String(d.uploader ?? ""),
     fullname: normalizeText(d.channel ?? d.creator ?? ""),
     caption: normalizeText(d.description ?? d.title ?? ""),
     likes: Number(d.like_count) || 0,
+    comments: Number(d.comment_count) || 0,
+    shares: Number(d.repost_count) || 0,
+    music: track ? `${track}${artist ? ` - ${artist}` : ""}` : "",
     date: ymd.length === 8 ? `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}` : "",
     avatar,
     media: d.thumbnail
@@ -1037,5 +1347,5 @@ async function saveTikTokCard(url: string, opts: CardOpts = {}): Promise<string>
     post.media ? fetchImage(post.media.url) : Promise.resolve(null),
   ]);
   const id = url.match(/video\/(\d+)/i)?.[1] ?? "tiktok";
-  return renderPostCard(post, avatarUri, mediaUri, `tiktok ${post.username} [${id}]`, { ...opts, url });
+  return renderTikTokCard(post, avatarUri, mediaUri, `tiktok ${post.username} [${id}]`, { ...opts, url });
 }
