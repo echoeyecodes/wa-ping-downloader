@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*.*.*"
     paths-ignore:
       - "**/*.md"
   workflow_dispatch:
@@ -24,9 +26,17 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Image name = ghcr.io/<repo-owner>/ping, lowercased for GHCR.
-      - name: Set image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ping" >> "$GITHUB_ENV"
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ping
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -41,13 +51,13 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=ping
           cache-to: type=gha,mode=max,scope=ping
 
       - name: Trigger Coolify redeploy
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         env:
           COOLIFY_BASE_URL: ${{ secrets.COOLIFY_BASE_URL }}
           COOLIFY_API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
