@@ -609,7 +609,10 @@ async function renderToVideo(
  * With `video: true`, IG/TikTok video posts return an mp4 with the clip playing
  * inside the card; otherwise a PNG is returned.
  */
-export async function saveCard(url: string, opts: { video?: boolean } = {}): Promise<string> {
+export async function saveCard(
+  url: string,
+  opts: { video?: boolean; videoTarget?: VideoTarget } = {},
+): Promise<string> {
   if (/tiktok\.com/i.test(url)) return saveTikTokCard(url, opts);
   if (/instagram\.com/i.test(url)) return saveIgCard(url, opts);
   return saveTweetCard(url, opts);
@@ -664,23 +667,42 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
       .map((m, i) => ({ uri: uris[i], video: m.video, width: m.width, height: m.height }))
       .filter((m): m is MediaItem => Boolean(m.uri));
 
-  // Play the main tweet's video, or fall back to the quoted tweet's video.
-  const playMain = Boolean(opts.video && media.length === 1 && media[0].video);
-  const playQuoted = Boolean(
-    opts.video && !playMain && quotedMedia.length === 1 && quotedMedia[0].video,
-  );
+  // Pick which video slot plays: the requested target if it has a video, else
+  // the first available among own → quote → parent → og.
+  const hasVideo = (m: Media[]) => m.length === 1 && m[0].video;
+  const slotVideo: Record<VideoTarget | "own", boolean> = {
+    own: hasVideo(media),
+    quote: hasVideo(quotedMedia),
+    parent: hasVideo(parentMedia),
+    og: hasVideo(parentQuotedMedia),
+  };
+  const tweetUrlOf = (t: Record<string, any>) =>
+    `https://x.com/${t.user?.screen_name ?? "i"}/status/${t.id_str}`;
+  const slotUrl: Record<VideoTarget | "own", string> = {
+    own: url,
+    quote: data.quoted_tweet ? tweetUrlOf(data.quoted_tweet) : "",
+    parent: data.parent ? tweetUrlOf(data.parent) : "",
+    og: pq ? tweetUrlOf(pq) : "",
+  };
+
+  let playSlot: VideoTarget | "own" | null = null;
+  if (opts.video) {
+    const order: Array<VideoTarget | "own"> = ["own", "quote", "parent", "og"];
+    const wanted = opts.videoTarget;
+    playSlot = wanted && slotVideo[wanted] ? wanted : (order.find((s) => slotVideo[s]) ?? null);
+  }
 
   const built = toItems(media, mainUris).length
-    ? buildMedia(toItems(media, mainUris), INNER, MEDIA_H, MEDIA_MAX_H, 16, playMain)
+    ? buildMedia(toItems(media, mainUris), INNER, MEDIA_H, MEDIA_MAX_H, 16, playSlot === "own")
     : null;
   const quotedBuilt = toItems(quotedMedia, quotedUris).length
-    ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12, playQuoted)
+    ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12, playSlot === "quote")
     : null;
   const parentBuilt = toItems(parentMedia, parentUris).length
-    ? buildMedia(toItems(parentMedia, parentUris), PARENT_INNER, 240, 400, 12)
+    ? buildMedia(toItems(parentMedia, parentUris), PARENT_INNER, 240, 400, 12, playSlot === "parent")
     : null;
   const parentQuotedBuilt = toItems(parentQuotedMedia, parentQuotedUris).length
-    ? buildMedia(toItems(parentQuotedMedia, parentQuotedUris), PARENT_QUOTE_INNER, 200, 320, 12)
+    ? buildMedia(toItems(parentQuotedMedia, parentQuotedUris), PARENT_QUOTE_INNER, 200, 320, 12, playSlot === "og")
     : null;
   const parentQuotedNode = parentQuoted
     ? quotedBox(parentQuoted, parentQuotedAvatar, parentQuotedBuilt?.node ?? null)
@@ -708,12 +730,7 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
     quotedBuilt?.node ?? null,
   );
   const outBase = `tweet ${main.author.handle || id} [${id}]`;
-  if (playMain) return renderToVideo(element, width, height, outBase, url);
-  if (playQuoted) {
-    const qt = data.quoted_tweet;
-    const qUrl = `https://x.com/${qt.user?.screen_name ?? "i"}/status/${qt.id_str}`;
-    return renderToVideo(element, width, height, outBase, qUrl);
-  }
+  if (playSlot) return renderToVideo(element, width, height, outBase, slotUrl[playSlot]);
   return renderToFile(element, width, height, `${outBase}.png`);
 }
 
@@ -881,7 +898,8 @@ function igCardElement(post: IgPost, avatarUri: string | null, mediaNode: unknow
   };
 }
 
-type CardOpts = { video?: boolean; url?: string };
+type VideoTarget = "quote" | "parent" | "og";
+type CardOpts = { video?: boolean; url?: string; videoTarget?: VideoTarget };
 
 async function compositeCardVideo(
   cardPng: string,

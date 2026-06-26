@@ -114,15 +114,16 @@ const ui = (() => {
 async function main(): Promise<void> {
   const argv = Bun.argv.slice(2);
 
-  // `card` flag: render a post into an image card. Add `mp4` for a video card
-  // (IG/TikTok video posts play inside the card).
+  // `card` renders an image card. Add `mp4` for a video card; for tweets, an
+  // optional target (quote | parent | og) picks which embedded video plays.
   if (argv.includes("card")) {
     const url = argv.find((a) => /^https?:\/\//i.test(a));
     if (!url) fail('Provide a post URL, e.g. npm run ping "<tweet>" card');
     const video = argv.includes("mp4");
+    const videoTarget = (["quote", "parent", "og"] as const).find((t) => argv.includes(t));
     ui.spin(`Building card for ${url}`);
     try {
-      const out = await saveCard(url, { video });
+      const out = await saveCard(url, { video, videoTarget });
       ui.done();
       ui.think("Saved card:");
       console.log(pathToFileURL(out).href);

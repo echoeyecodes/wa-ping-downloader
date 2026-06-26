@@ -122,10 +122,11 @@ async function handleCard(
   msg: WAMessage,
   url: string,
   video: boolean,
+  videoTarget: "quote" | "parent" | "og" | undefined,
 ): Promise<void> {
   const stopTyping = startTyping(sock, jid);
   try {
-    const path = await saveCard(url, { video });
+    const path = await saveCard(url, { video, videoTarget });
     stopTyping();
     const content: AnyMessageContent =
       parsePath(path).ext.toLowerCase() === ".mp4"
@@ -220,9 +221,17 @@ await runSocket({
       const body = extractText(msg);
       const command = parseCommand(body);
       if (!command) continue;
-      // "card" + a post link → render a card. Add "mp4" for a playing video card.
+      // "card" + a post link → render a card. Add "mp4" for a playing video card;
+      // "quote"/"parent"/"og" picks which embedded video plays (tweets).
       if (/\bcard\b/i.test(body) && isCardUrl(command.url)) {
-        await handleCard(sock, jid, msg, command.url, /\bmp4\b/i.test(body));
+        const videoTarget = /\bog\b/i.test(body)
+          ? "og"
+          : /\bparent\b/i.test(body)
+            ? "parent"
+            : /\bquote\b/i.test(body)
+              ? "quote"
+              : undefined;
+        await handleCard(sock, jid, msg, command.url, /\bmp4\b/i.test(body), videoTarget);
         continue;
       }
       await handleCommand(sock, jid, msg, command);

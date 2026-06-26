@@ -71,6 +71,11 @@ For any video post (tweet, Instagram, or TikTok), add `mp4` (CLI) or include
 `mp4` in the message (bot) to get a **video card** — an mp4 where the clip plays
 inside the card while the header, text, likes, and caption stay around it.
 
+A tweet can embed several videos (its own, its quoted tweet, the tweet it
+replies to, that tweet's quote). `card mp4` auto-picks the first available; add a
+target to choose: `quote`, `parent`, or `og` (the parent's quoted tweet). E.g.
+`npm run ping "<tweet>" card mp4 quote`.
+
 ## WhatsApp bot
 
 1. Pair your phone (scan the QR once):
