@@ -60,8 +60,8 @@ Files are saved to `downloads/`. The local file URL is printed at the end.
 
 The `card` mode renders a post into a PNG that looks like the real thing:
 
-- **Tweets** — text, media, quotes, and link previews. Uses X's public
-  syndication API, so no login is needed.
+- **Tweets** — text, media, quotes, link previews, and replies (shows the
+  original tweet above the reply). Uses X's public syndication API, no login.
 - **Instagram** — avatar, the photo/video, likes, and caption. Uses gallery-dl,
   so it needs your Instagram cookies (see Cookies below).
 - **TikTok** — creator, the video thumbnail, likes, and caption. Uses yt-dlp, no

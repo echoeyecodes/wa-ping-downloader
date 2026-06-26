@@ -175,6 +175,7 @@ const ACCENT = "#1d9bf0";
 const SENTINEL = "#fe00ff";
 const INNER = 576;
 const QUOTE_INNER = 544;
+const PARENT_INNER = 516;
 const MEDIA_H = 320;
 const MEDIA_MAX_H = 720;
 const GAP = 4;
@@ -441,7 +442,48 @@ function quotedBox(q: Tweet, avatar: string | null, mediaNode: unknown | null) {
   };
 }
 
+// The replied-to (parent) tweet, shown above the reply with a connecting line.
+function parentBlock(parent: Tweet, avatar: string | null, mediaNode: unknown | null) {
+  const nameRow = {
+    type: "div",
+    props: {
+      style: { display: "flex" },
+      children: [
+        text(parent.author.name, { fontSize: 20, fontWeight: 700 }),
+        text(parent.author.handle ? ` @${parent.author.handle}` : "", { fontSize: 20, color: GRAY }),
+      ],
+    },
+  };
+  const right = [nameRow, parent.text ? richText(parent.text, 26, 1.3, 6) : null, mediaNode].filter(Boolean);
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex" },
+      children: [
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", flexDirection: "column", alignItems: "center", width: 48 },
+            children: [
+              avatarNode(avatar, 48),
+              { type: "div", props: { style: { display: "flex", flexGrow: 1, width: 2, marginTop: 4, backgroundColor: "#cfd9de" } } },
+            ],
+          },
+        },
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", flexDirection: "column", flexGrow: 1, marginLeft: 12, paddingBottom: 16 },
+            children: right,
+          },
+        },
+      ],
+    },
+  };
+}
+
 function cardElement(
+  parentNode: unknown | null,
   main: Tweet,
   mainAvatar: string | null,
   mediaNode: unknown | null,
@@ -450,7 +492,9 @@ function cardElement(
   quotedAvatar: string | null,
   quotedMediaNode: unknown | null,
 ): unknown {
-  const children: unknown[] = [authorRow(main.author, mainAvatar, 56, 24)];
+  const children: unknown[] = [];
+  if (parentNode) children.push(parentNode);
+  children.push(authorRow(main.author, mainAvatar, 56, 24));
   if (main.text) children.push(richText(main.text, 28, 1.35, 20));
   if (mediaNode) children.push(mediaNode);
   if (linkCardNode) children.push(linkCardNode);
@@ -573,15 +617,20 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
   const media = mediaOf(data);
   const quoted = data.quoted_tweet ? toTweet(data.quoted_tweet) : null;
   const quotedMedia = data.quoted_tweet ? mediaOf(data.quoted_tweet) : [];
+  const parent = data.parent ? toTweet(data.parent) : null;
+  const parentMedia = data.parent ? mediaOf(data.parent) : [];
   const link = media.length === 0 ? linkCardOf(data) : null;
 
-  const [mainAvatar, quotedAvatar, mainUris, quotedUris, linkImg] = await Promise.all([
-    fetchImage(main.author.avatar),
-    quoted ? fetchImage(quoted.author.avatar) : Promise.resolve(null),
-    Promise.all(media.map((m) => fetchImage(m.url))),
-    Promise.all(quotedMedia.map((m) => fetchImage(m.url))),
-    link?.image ? fetchImage(link.image.url) : Promise.resolve(null),
-  ]);
+  const [mainAvatar, quotedAvatar, parentAvatar, mainUris, quotedUris, parentUris, linkImg] =
+    await Promise.all([
+      fetchImage(main.author.avatar),
+      quoted ? fetchImage(quoted.author.avatar) : Promise.resolve(null),
+      parent ? fetchImage(parent.author.avatar) : Promise.resolve(null),
+      Promise.all(media.map((m) => fetchImage(m.url))),
+      Promise.all(quotedMedia.map((m) => fetchImage(m.url))),
+      Promise.all(parentMedia.map((m) => fetchImage(m.url))),
+      link?.image ? fetchImage(link.image.url) : Promise.resolve(null),
+    ]);
   const linkBuilt = link ? buildLinkCard(link, linkImg) : null;
 
   const toItems = (ms: Media[], uris: (string | null)[]): MediaItem[] =>
@@ -601,14 +650,20 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
   const quotedBuilt = toItems(quotedMedia, quotedUris).length
     ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12, playQuoted)
     : null;
+  const parentBuilt = toItems(parentMedia, parentUris).length
+    ? buildMedia(toItems(parentMedia, parentUris), PARENT_INNER, 240, 400, 12)
+    : null;
+  const parentNode = parent ? parentBlock(parent, parentAvatar, parentBuilt?.node ?? null) : null;
 
   const width = 640;
   let height = 32 + 72 + lineCount(main.text, 46) * 40 + 24 + 28 + 24 + 32;
   if (built) height += built.height;
   if (linkBuilt) height += linkBuilt.height;
+  if (parent) height += 56 + lineCount(parent.text, 42) * 36 + (parentBuilt?.height ?? 0) + 16;
   if (quoted) height += 32 + 56 + lineCount(quoted.text, 52) * 28 + 16 + (quotedBuilt?.height ?? 0);
 
   const element = cardElement(
+    parentNode,
     main,
     mainAvatar,
     built?.node ?? null,
