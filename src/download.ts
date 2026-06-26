@@ -174,6 +174,7 @@ export async function resolveCookies(): Promise<string | null> {
 async function ytdlpDownload(
   { url, format }: Command,
   onEvent?: (event: DownloadEvent) => void,
+  normalize = true,
 ): Promise<string[]> {
   const outDir = downloadsDir();
   await mkdir(outDir, { recursive: true });
@@ -234,7 +235,7 @@ async function ytdlpDownload(
   }
 
   const finalPaths =
-    format === "mp4" ? await Promise.all(paths.map((p) => normalizeMp4(p, onEvent))) : paths;
+    format === "mp4" && normalize ? await Promise.all(paths.map((p) => normalizeMp4(p, onEvent))) : paths;
 
   await removeOtherFormat(finalPaths, format, onEvent);
   return finalPaths;
@@ -377,6 +378,7 @@ async function applyFormat(
   files: string[],
   format: Format,
   onEvent?: (event: DownloadEvent) => void,
+  normalize = true,
 ): Promise<string[]> {
   const result: string[] = [];
   for (const file of files) {
@@ -389,7 +391,7 @@ async function applyFormat(
       onEvent?.({ kind: "processing", label: `Extracting audio from ${parsePath(file).base}` });
       result.push(await toMp3(file));
     } else {
-      result.push(await normalizeMp4(file, onEvent));
+      result.push(normalize ? await normalizeMp4(file, onEvent) : file);
     }
   }
   return result;
@@ -422,6 +424,7 @@ const lastLine = (text: string): string =>
 async function galleryDownload(
   { url, format }: Command,
   onEvent?: (event: DownloadEvent) => void,
+  normalize = true,
 ): Promise<string[]> {
   onEvent?.({ kind: "gallery" });
   const dir = join(downloadsDir(), gallerySlug(url));
@@ -445,21 +448,23 @@ async function galleryDownload(
     const message = lastLine(stderr) || lastLine(stdout) || `gallery-dl exited with code ${code}.`;
     throw new Error(message.replace(/^\[\w+\]\s*/, ""));
   }
-  return applyFormat(files, format, onEvent);
+  return applyFormat(files, format, onEvent, normalize);
 }
 
 /** Download a link into ./downloads, falling back to gallery-dl for non-video posts. */
 export async function download(
   command: Command,
   onEvent?: (event: DownloadEvent) => void,
+  opts: { normalize?: boolean } = {},
 ): Promise<string[]> {
   if (isPlaylistUrl(command.url)) {
     throw new Error("Playlists aren't supported — send a single video link.");
   }
 
+  const normalize = opts.normalize ?? true;
   let ytError: unknown;
   try {
-    return await ytdlpDownload(command, onEvent);
+    return await ytdlpDownload(command, onEvent, normalize);
   } catch (err) {
     // A real video with no audio shouldn't fall through to gallery-dl.
     if (err instanceof Error && err.message.includes(NO_AUDIO)) throw err;
@@ -467,7 +472,7 @@ export async function download(
   }
 
   try {
-    return await galleryDownload(command, onEvent);
+    return await galleryDownload(command, onEvent, normalize);
   } catch (galErr) {
     const msg = galErr instanceof Error ? galErr.message : String(galErr);
     if (/unsupported url|no suitable/i.test(msg) && ytError) {

@@ -7,7 +7,8 @@ import { Resvg } from "@resvg/resvg-js";
 import satori from "satori";
 import { download, downloadsDir, resolveCookies } from "./download";
 
-const RENDER_SCALE = 2;
+const RENDER_SCALE = 2; // static PNG cards
+const VIDEO_SCALE = 1; // video cards for cheaper encoding
 
 type Author = { name: string; handle: string; avatar: string | null };
 type Media = { url: string; video: boolean; width: number; height: number };
@@ -551,8 +552,8 @@ async function renderSvg(element: unknown, width: number, height: number): Promi
   });
 }
 
-async function rasterize(svg: string, width: number, outName: string): Promise<string> {
-  const png = new Resvg(svg, { fitTo: { mode: "width", value: width * RENDER_SCALE } }).render().asPng();
+async function rasterize(svg: string, width: number, scale: number, outName: string): Promise<string> {
+  const png = new Resvg(svg, { fitTo: { mode: "width", value: width * scale } }).render().asPng();
   const outDir = downloadsDir();
   await mkdir(outDir, { recursive: true });
   const out = join(outDir, outName);
@@ -562,19 +563,19 @@ async function rasterize(svg: string, width: number, outName: string): Promise<s
 
 /** Render a satori element tree to a PNG file in downloads/ and return its path. */
 async function renderToFile(element: unknown, width: number, height: number, outName: string): Promise<string> {
-  return rasterize(await renderSvg(element, width, height), width, outName);
+  return rasterize(await renderSvg(element, width, height), width, RENDER_SCALE, outName);
 }
 
-function sentinelRect(svg: string): { x: number; y: number; w: number; h: number } | null {
+function sentinelRect(svg: string, scale: number): { x: number; y: number; w: number; h: number } | null {
   const m = svg.match(new RegExp(`<rect [^>]*fill="${SENTINEL}"[^>]*/>`));
   if (!m) return null;
   const r = m[0];
   const num = (attr: string) => Number(r.match(new RegExp(`${attr}="([\\d.]+)"`))?.[1] ?? 0);
   return {
-    x: Math.round(num("x") * RENDER_SCALE),
-    y: Math.round(num("y") * RENDER_SCALE),
-    w: Math.round(num("width") * RENDER_SCALE),
-    h: Math.round(num("height") * RENDER_SCALE),
+    x: Math.round(num("x") * scale),
+    y: Math.round(num("y") * scale),
+    w: Math.round(num("width") * scale),
+    h: Math.round(num("height") * scale),
   };
 }
 
@@ -585,9 +586,9 @@ async function renderToVideo(
   outBase: string,
   sourceUrl: string,
 ): Promise<string> {
-  const svg = await renderSvg(element, width, height);
-  const rect = sentinelRect(svg);
-  const png = await rasterize(svg, width, `${outBase}.png`);
+  const svg = await renderSvg(element, width, height + (height % 2)); // even height for h264
+  const rect = sentinelRect(svg, VIDEO_SCALE);
+  const png = await rasterize(svg, width, VIDEO_SCALE, `${outBase}.png`);
   if (!rect) return png;
   return compositeCardVideo(png, sourceUrl, rect, `${outBase}.mp4`);
 }
@@ -856,7 +857,8 @@ async function compositeCardVideo(
 ): Promise<string> {
   let video: string | undefined;
   try {
-    video = (await download({ url, format: "mp4" }))[0];
+    // Raw video — the compositor re-encodes anyway, so skip download's normalize pass.
+    video = (await download({ url, format: "mp4" }, undefined, { normalize: false }))[0];
   } catch {
     video = undefined;
   }
@@ -874,8 +876,9 @@ async function compositeCardVideo(
       "-i", video,
       "-filter_complex", filter,
       "-map", "[v]", "-map", "1:a?",
-      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "23",
-      "-c:a", "aac", "-movflags", "+faststart", "-shortest",
+      "-r", "30",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "28",
+      "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-shortest",
       out,
     ],
     { stdout: "ignore", stderr: "ignore" },
