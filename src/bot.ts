@@ -18,7 +18,7 @@ import { extractText, isMentioned, isSelfChat, runSocket } from "./wa";
 const isCardUrl = (url: string): boolean =>
   /(?:x|twitter)\.com\/[^/]+\/status\//i.test(url) ||
   /instagram\.com\/(?:p|reel|tv)\//i.test(url) ||
-  /tiktok\.com\/.+\/video\/\d+/i.test(url);
+  /(?:vm|vt)\.tiktok\.com\/|tiktok\.com\/(?:t\/|.+\/video\/\d+)/i.test(url);
 
 const ALBUM_IMAGE = ["jpg", "jpeg", "png", "webp"];
 const ALBUM_VIDEO = ["mp4", "mov", "mkv", "webm", "m4v", "gif"];
