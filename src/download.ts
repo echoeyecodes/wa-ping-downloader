@@ -175,14 +175,10 @@ async function ytdlpDownload(
   { url, format }: Command,
   onEvent?: (event: DownloadEvent) => void,
   normalize = true,
-  maxHeight?: number,
 ): Promise<string[]> {
   const outDir = downloadsDir();
   await mkdir(outDir, { recursive: true });
   const template = `${outDir}/%(title)s [%(id)s].%(ext)s`;
-
-  const cap = maxHeight ? `[height<=${maxHeight}]` : "";
-  const sortArgs = maxHeight ? ["-S", `res:${maxHeight},fps:30`] : [];
 
   const formatArgs =
     format === "mp3"
@@ -191,8 +187,7 @@ async function ytdlpDownload(
           // Prefer H.264 + AAC so the result plays in WhatsApp (not just desktop
           // players). Fall back to best available if a site has no H.264.
           "-f",
-          `bv*[vcodec^=avc1]${cap}+ba[acodec^=mp4a]/b[vcodec^=avc1]${cap}/bv*${cap}+ba/b${cap}/bv*+ba/b`,
-          ...sortArgs,
+          "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1]/bv*+ba/b",
           "--merge-output-format",
           "mp4",
           // moov atom at the front for clean streaming/playback.
@@ -460,7 +455,7 @@ async function galleryDownload(
 export async function download(
   command: Command,
   onEvent?: (event: DownloadEvent) => void,
-  opts: { normalize?: boolean; maxHeight?: number } = {},
+  opts: { normalize?: boolean } = {},
 ): Promise<string[]> {
   if (isPlaylistUrl(command.url)) {
     throw new Error("Playlists aren't supported — send a single video link.");
@@ -469,7 +464,7 @@ export async function download(
   const normalize = opts.normalize ?? true;
   let ytError: unknown;
   try {
-    return await ytdlpDownload(command, onEvent, normalize, opts.maxHeight);
+    return await ytdlpDownload(command, onEvent, normalize);
   } catch (err) {
     // A real video with no audio shouldn't fall through to gallery-dl.
     if (err instanceof Error && err.message.includes(NO_AUDIO)) throw err;
