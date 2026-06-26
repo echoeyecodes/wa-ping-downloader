@@ -473,7 +473,7 @@ function parentBlock(parent: Tweet, avatar: string | null, mediaNode: unknown | 
         {
           type: "div",
           props: {
-            style: { display: "flex", flexDirection: "column", flexGrow: 1, marginLeft: 12, paddingBottom: 16 },
+            style: { display: "flex", flexDirection: "column", width: PARENT_INNER, marginLeft: 12, paddingBottom: 16 },
             children: right,
           },
         },
