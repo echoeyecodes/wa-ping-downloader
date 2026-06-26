@@ -2,6 +2,7 @@ node_modules
 downloads
 .wa-auth
 .env
+cookies.txt
 .git
 .gitignore
 .github
