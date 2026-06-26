@@ -589,12 +589,17 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
       .map((m, i) => ({ uri: uris[i], video: m.video, width: m.width, height: m.height }))
       .filter((m): m is MediaItem => Boolean(m.uri));
 
-  const wantVideo = Boolean(opts.video && media.length === 1 && media[0].video);
+  // Play the main tweet's video, or fall back to the quoted tweet's video.
+  const playMain = Boolean(opts.video && media.length === 1 && media[0].video);
+  const playQuoted = Boolean(
+    opts.video && !playMain && quotedMedia.length === 1 && quotedMedia[0].video,
+  );
+
   const built = toItems(media, mainUris).length
-    ? buildMedia(toItems(media, mainUris), INNER, MEDIA_H, MEDIA_MAX_H, 16, wantVideo)
+    ? buildMedia(toItems(media, mainUris), INNER, MEDIA_H, MEDIA_MAX_H, 16, playMain)
     : null;
   const quotedBuilt = toItems(quotedMedia, quotedUris).length
-    ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12)
+    ? buildMedia(toItems(quotedMedia, quotedUris), QUOTE_INNER, 220, 360, 12, playQuoted)
     : null;
 
   const width = 640;
@@ -613,7 +618,12 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
     quotedBuilt?.node ?? null,
   );
   const outBase = `tweet ${main.author.handle || id} [${id}]`;
-  if (wantVideo) return renderToVideo(element, width, height, outBase, url);
+  if (playMain) return renderToVideo(element, width, height, outBase, url);
+  if (playQuoted) {
+    const qt = data.quoted_tweet;
+    const qUrl = `https://x.com/${qt.user?.screen_name ?? "i"}/status/${qt.id_str}`;
+    return renderToVideo(element, width, height, outBase, qUrl);
+  }
   return renderToFile(element, width, height, `${outBase}.png`);
 }
 
