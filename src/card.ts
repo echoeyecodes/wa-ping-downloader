@@ -177,6 +177,7 @@ const SENTINEL = "#fe00ff";
 const INNER = 576;
 const QUOTE_INNER = 544;
 const PARENT_INNER = 516;
+const PARENT_QUOTE_INNER = 484; // PARENT_INNER minus the quote box's padding
 const MEDIA_H = 320;
 const MEDIA_MAX_H = 720;
 const GAP = 4;
@@ -444,7 +445,12 @@ function quotedBox(q: Tweet, avatar: string | null, mediaNode: unknown | null) {
 }
 
 // The replied-to (parent) tweet, shown above the reply with a connecting line.
-function parentBlock(parent: Tweet, avatar: string | null, mediaNode: unknown | null) {
+function parentBlock(
+  parent: Tweet,
+  avatar: string | null,
+  mediaNode: unknown | null,
+  quotedNode: unknown | null,
+) {
   const nameRow = {
     type: "div",
     props: {
@@ -455,7 +461,12 @@ function parentBlock(parent: Tweet, avatar: string | null, mediaNode: unknown | 
       ],
     },
   };
-  const right = [nameRow, parent.text ? richText(parent.text, 26, 1.3, 6) : null, mediaNode].filter(Boolean);
+  const right = [
+    nameRow,
+    parent.text ? richText(parent.text, 26, 1.3, 6) : null,
+    mediaNode,
+    quotedNode,
+  ].filter(Boolean);
   return {
     type: "div",
     props: {
@@ -620,18 +631,32 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
   const quotedMedia = data.quoted_tweet ? mediaOf(data.quoted_tweet) : [];
   const parent = data.parent ? toTweet(data.parent) : null;
   const parentMedia = data.parent ? mediaOf(data.parent) : [];
+  const pq = data.parent?.quoted_tweet ?? null;
+  const parentQuoted = pq ? toTweet(pq) : null;
+  const parentQuotedMedia = pq ? mediaOf(pq) : [];
   const link = media.length === 0 ? linkCardOf(data) : null;
 
-  const [mainAvatar, quotedAvatar, parentAvatar, mainUris, quotedUris, parentUris, linkImg] =
-    await Promise.all([
-      fetchImage(main.author.avatar),
-      quoted ? fetchImage(quoted.author.avatar) : Promise.resolve(null),
-      parent ? fetchImage(parent.author.avatar) : Promise.resolve(null),
-      Promise.all(media.map((m) => fetchImage(m.url))),
-      Promise.all(quotedMedia.map((m) => fetchImage(m.url))),
-      Promise.all(parentMedia.map((m) => fetchImage(m.url))),
-      link?.image ? fetchImage(link.image.url) : Promise.resolve(null),
-    ]);
+  const [
+    mainAvatar,
+    quotedAvatar,
+    parentAvatar,
+    parentQuotedAvatar,
+    mainUris,
+    quotedUris,
+    parentUris,
+    parentQuotedUris,
+    linkImg,
+  ] = await Promise.all([
+    fetchImage(main.author.avatar),
+    quoted ? fetchImage(quoted.author.avatar) : Promise.resolve(null),
+    parent ? fetchImage(parent.author.avatar) : Promise.resolve(null),
+    parentQuoted ? fetchImage(parentQuoted.author.avatar) : Promise.resolve(null),
+    Promise.all(media.map((m) => fetchImage(m.url))),
+    Promise.all(quotedMedia.map((m) => fetchImage(m.url))),
+    Promise.all(parentMedia.map((m) => fetchImage(m.url))),
+    Promise.all(parentQuotedMedia.map((m) => fetchImage(m.url))),
+    link?.image ? fetchImage(link.image.url) : Promise.resolve(null),
+  ]);
   const linkBuilt = link ? buildLinkCard(link, linkImg) : null;
 
   const toItems = (ms: Media[], uris: (string | null)[]): MediaItem[] =>
@@ -654,13 +679,22 @@ async function saveTweetCard(url: string, opts: CardOpts = {}): Promise<string> 
   const parentBuilt = toItems(parentMedia, parentUris).length
     ? buildMedia(toItems(parentMedia, parentUris), PARENT_INNER, 240, 400, 12)
     : null;
-  const parentNode = parent ? parentBlock(parent, parentAvatar, parentBuilt?.node ?? null) : null;
+  const parentQuotedBuilt = toItems(parentQuotedMedia, parentQuotedUris).length
+    ? buildMedia(toItems(parentQuotedMedia, parentQuotedUris), PARENT_QUOTE_INNER, 200, 320, 12)
+    : null;
+  const parentQuotedNode = parentQuoted
+    ? quotedBox(parentQuoted, parentQuotedAvatar, parentQuotedBuilt?.node ?? null)
+    : null;
+  const parentNode = parent
+    ? parentBlock(parent, parentAvatar, parentBuilt?.node ?? null, parentQuotedNode)
+    : null;
 
   const width = 640;
   let height = 32 + 72 + lineCount(main.text, 46) * 40 + 24 + 28 + 24 + 32;
   if (built) height += built.height;
   if (linkBuilt) height += linkBuilt.height;
   if (parent) height += 56 + lineCount(parent.text, 42) * 36 + (parentBuilt?.height ?? 0) + 16;
+  if (parentQuoted) height += 32 + 56 + lineCount(parentQuoted.text, 48) * 26 + (parentQuotedBuilt?.height ?? 0);
   if (quoted) height += 32 + 56 + lineCount(quoted.text, 52) * 28 + 16 + (quotedBuilt?.height ?? 0);
 
   const element = cardElement(
