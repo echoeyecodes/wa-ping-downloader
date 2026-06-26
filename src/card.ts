@@ -909,8 +909,7 @@ async function compositeCardVideo(
 ): Promise<string> {
   let video: string | undefined;
   try {
-    // Raw video — the compositor re-encodes anyway, so skip download's normalize pass.
-    video = (await download({ url, format: "mp4" }, undefined, { normalize: false }))[0];
+    video = (await download({ url, format: "mp4" }, undefined, { normalize: false, maxHeight: 480 }))[0];
   } catch {
     video = undefined;
   }
@@ -929,7 +928,7 @@ async function compositeCardVideo(
       "-filter_complex", filter,
       "-map", "[v]", "-map", "1:a?",
       "-r", "30",
-      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "28",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "28", "-threads", "0",
       "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-shortest",
       out,
     ],
